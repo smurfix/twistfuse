@@ -53,7 +53,17 @@ class Handler(object):
 	__out_header_size = fuse_out_header.calcsize()
 	MAX_READ = FUSE_MAX_IN
 
-	def __init__(self, mountpoint, filesystem, logfile='STDERR', **opts1):
+	def __init__(self, logfile='STDERR')
+		if logfile == 'STDERR':
+			logfile = sys.stderr
+		self.logfile = logfile
+		self.filehandles = {}
+		self.dirhandles = {}
+		self.notices = {}
+		self.nexth = 1
+		self.filesystem.start(self)
+
+	def mount(self,filesystem,mountpoint, **opts)
 		opts = getattr(filesystem, 'MOUNT_OPTIONS', {}).copy()
 		opts.update(opts1)
 		if opts:
@@ -68,21 +78,27 @@ class Handler(object):
 			opts = ' '.join(optlist)
 		else:
 			opts = None
+		self.mountpoint = mountpoint
+		self.filesystem = filesystem
 		fd = fuse_mount(mountpoint, opts)
 		if fd < 0:
 			raise IOError("mount failed")
 		self.fd = fd
-		if logfile == 'STDERR':
-			logfile = sys.stderr
-		self.logfile = logfile
 		self.log('* mounted at %s', mountpoint)
-		self.mountpoint = mountpoint
-		self.filesystem = filesystem
-		self.filehandles = {}
-		self.dirhandles = {}
-		self.notices = {}
-		self.nexth = 1
-		self.filesystem.start(self)
+
+	def umount(self):
+		if self.filesystem is not None:
+			fs = self.filesystem
+			self.filesystem = None
+			fs.stop()
+		if self.fd is not None:
+			os.close(self.fd)
+			self.fd = None
+		if self.mountpoint:
+			cmd = "fusermount -u '%s'" % self.mountpoint.replace("'", r"'\''")
+			self.mountpoint = None
+			self.log('* %s', cmd)
+			self.__system(cmd)
 
 	def __del__(self):
 		if self.filesystem is not None:
@@ -97,9 +113,6 @@ class Handler(object):
 			self.mountpoint = None
 			self.log('* %s', cmd)
 			self.__system(cmd)
-
-	# TODO: support deferred close
-	close = __del__
 
 	def log(self,s,*a):
 		if not self.logfile:
