@@ -4,25 +4,24 @@ from __future__ import division
 ##
 ##  Copyright © 2011, Matthias Urlichs <matthias@urlichs.de>
 ##
-##  This program is free software: you can redistribute it and/or modify
-##  it under the terms of the GNU General Public License as published by
-##  the Free Software Foundation, either version 3 of the License, or
-##  (at your option) any later version.
-##
-##  This program is distributed in the hope that it will be useful,
-##  but WITHOUT ANY WARRANTY; without even the implied warranty of
-##  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-##  GNU General Public License (included; see the file LICENSE)
-##  for more details.
-##
-## Large portions of this code have been copied from 
-## http://codespeak.net/svn/user/arigo/hack/pyfuse, but that code
-## does not have any copyright or license notices.
+## This code descends from an implementation at
+## http://codespeak.net/svn/user/arigo/hack/pyfuse.
+## which does not have a license statement, but (according to
+## personal communication with its author) has been released
+## under the 3-clause MIT license.
 
 from kernel import *
 import os, errno, sys, stat
 
+__all__ = ("Handler","NoReply")
+
+class NoReply(Exception):
+	"""Raise this exception to not send a FUSE reply back"""
+	pass
+
 def fuse_mount(mountpoint, opts=None):
+	"""Options is a comma-separated list of FUSE options"""
+	# TODO: call fusermount directly
 	if not isinstance(mountpoint, str):
 		raise TypeError
 	if opts is not None and not isinstance(opts, str):
@@ -53,7 +52,7 @@ class Handler(object):
 	__out_header_size = fuse_out_header.calcsize()
 	MAX_READ = FUSE_MAX_IN
 
-	def __init__(self, logfile='STDERR')
+	def __init__(self, logfile='STDERR'):
 		if logfile == 'STDERR':
 			logfile = sys.stderr
 		self.logfile = logfile
@@ -61,9 +60,8 @@ class Handler(object):
 		self.dirhandles = {}
 		self.notices = {}
 		self.nexth = 1
-		self.filesystem.start(self)
 
-	def mount(self,filesystem,mountpoint, **opts)
+	def mount(self,filesystem,mountpoint, **opts1):
 		opts = getattr(filesystem, 'MOUNT_OPTIONS', {}).copy()
 		opts.update(opts1)
 		if opts:
@@ -90,7 +88,7 @@ class Handler(object):
 		if self.filesystem is not None:
 			fs = self.filesystem
 			self.filesystem = None
-			fs.stop()
+			fs.stop(False)
 		if self.fd is not None:
 			os.close(self.fd)
 			self.fd = None
@@ -101,15 +99,17 @@ class Handler(object):
 			self.__system(cmd)
 
 	def __del__(self):
-		if self.filesystem is not None:
-			fs = self.filesystem
+		fs = getattr(self,"filesystem",None)
+		if fs is not None:
 			self.filesystem = None
-			fs.stop()
+			fs.stop(True)
+		fd = getattr(self,"fd",None)
 		if self.fd is not None:
-			os.close(self.fd)
+			os.close(fd)
 			self.fd = None
-		if self.mountpoint:
-			cmd = "fusermount -u '%s'" % self.mountpoint.replace("'", r"'\''")
+		mountpoint = getattr(self,"mountpoint",None)
+		if mountpoint is not None:
+			cmd = "fusermount -u '%s'" % mountpoint.replace("'", r"'\''")
 			self.mountpoint = None
 			self.log('* %s', cmd)
 			self.__system(cmd)
@@ -120,11 +120,14 @@ class Handler(object):
 		print >>sys.stderr,s % a
 
 	def loop_forever(self):
-		while True:
-			msg = os.read(self.fd, FUSE_MAX_IN)
-			if not msg:
-				raise EOFError("out-kernel connection closed")
-			self.handle_message(msg)
+		try:
+			while True:
+				msg = os.read(self.fd, FUSE_MAX_IN)
+				if not msg:
+					raise EOFError("out-kernel connection closed")
+				self.handle_message(msg)
+		except KeyboardInterrupt:
+			return
 
 	def handle_message(self, msg):
 		headersize = self.__in_header_size
@@ -137,10 +140,11 @@ class Handler(object):
 				meth = getattr(self, "fuse_"+name)
 			except (IndexError, AttributeError):
 				raise NotImplementedError
-			if s_in is None:
-				s_in = lambda x:x
-			self.log('%s(%d)', name, req.nodeid)
-			reply = meth(req, s_in(msg[headersize:]))
+			msg = msg[headersize:]
+			if s_in is not None:
+				msg = s_in(msg)
+			self.log('%s(%d) << %s', name, req.nodeid, msg)
+			reply = meth(req, msg)
 			self.log('   >> %s', repr(reply))
 		except NotImplementedError:
 			self.log('%s: not implemented', name)
@@ -178,54 +182,52 @@ class Handler(object):
 			else:
 				raise
 
-	def notsupp_or_ro(self):
-		if hasattr(self.filesystem, "modified"):
-			raise IOError(errno.ENOSYS, "not supported")
-		else:
-			raise IOError(errno.EROFS, "read-only file system")
-
 	# ____________________________________________________________
 
 	def fuse_init(self, req, msg):
 		self.log('INIT: %d.%d', msg.major, msg.minor)
-		if hasattr(self.filesystem,'init'):
-			flags = self.filesystem.init(msg.flags)
-		else:
-			flags = 0
-		return dict(major = FUSE_KERNEL_VERSION,
+		d = self.filesystem.mount(self, msg.flags)
+		rd = dict(major = FUSE_KERNEL_VERSION,
 			minor = FUSE_KERNEL_MINOR_VERSION, max_readahead = 1024*1024,
 			max_background=20, max_write=65536, flags = 0)
+		if d:
+			rd.update(d)
+		return rd
+
 
 	def fuse_getattr(self, req, msg):
 		node = self.filesystem.getnode(req.nodeid)
-		attr, valid = self.filesystem.getattr(node)
-		return dict(attr_valid = valid, attr = attr)
+		return self._getattr(node)
+
+	def _getattr(self,node):
+		attr = node.getattr()
+		if isinstance(attr,tuple):
+			attr, attr_valid = attr
+		else:
+			attr_valid = node.attr_valid()
+		return dict(attr_valid = attr_valid, attr = attr)
 
 	def fuse_setattr(self, req, msg):
 		node = self.filesystem.getnode(req.nodeid)
-		if not hasattr(node, 'setattr'):
-			self.notsupp_or_ro()
 		values = {}
 		if msg.valid & FATTR_MODE:
-			values['mode'] = msg.attr.mode & 0777
+			values['mode'] = msg.mode & 0777
 		if msg.valid & FATTR_UID:
-			values['uid'] = msg.attr.uid
+			values['uid'] = msg.uid
 		if msg.valid & FATTR_GID:
-			values['gid '] = msg.attr.gid
+			values['gid '] = msg.gid
 		if msg.valid & FATTR_SIZE:
-			values['size'] = msg.attr.size
+			values['size'] = msg.size
 		if msg.valid & FATTR_ATIME:
-			values['atime'] = msg.attr.atime
+			values['atime'] = msg.atime
 		if msg.valid & FATTR_MTIME:
-			values['mtime'] = msg.attr.mtime
+			values['mtime'] = msg.mtime
 		node.setattr(**values)
-		res = node.getattr()
-		attr, valid = res
-		return dict(attr_valid = valid, attr = attr)
+		return self._getattr(node)
 
 	def fuse_release(self, req, msg):
 		try:
-			f = self.filehandles.pop[msg.fh]
+			f = self.filehandles.pop(msg.fh)
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
 		else:
@@ -233,7 +235,7 @@ class Handler(object):
 
 	def fuse_releasedir(self, req, msg):
 		try:
-			f = self.dirhandles.pop[msg.fh]
+			f = self.dirhandles.pop(msg.fh)
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
 		else:
@@ -241,8 +243,10 @@ class Handler(object):
 
 	def fuse_opendir(self, req, msg):
 		node = self.filesystem.getnode(req.nodeid)
-		attr, valid = node.getattr()
-		if mode2type(attr.mode) != TYPE_DIR:
+		attr = node.getattr()
+		if isinstance(attr,tuple):
+			attr = attr[0]
+		if mode2type(attr['mode']) != TYPE_DIR:
 			raise IOError(errno.ENOTDIR, node)
 		f = node.opendir()
 		fh = self.nexth
@@ -264,16 +268,16 @@ class Handler(object):
 			raise IOError(errno.EBADF, msg.fh)
 		# start or rewind
 		d_entries = []
-		off = msg.offset
 		length = 0
-		for name, type, inode in f.listdir(offset=off):
-			off += 1
+		print "RD",msg.offset,msg.size
+		for name, type, inode, off in f.read(offset=msg.offset):
+			print "E",name, type, inode, off
 			d_entry = fuse_dirent(ino  = inode,
 			                      off  = off,
 			                      type = type,
 			                      name = name)
 			d_len = fuse_dirent.calcsize(len(name))
-			if length+d_len < msg.size:
+			if length+d_len > msg.size:
 				break
 			d_entries.append(d_entry)
 			length += fuse_dirent.calcsize(len(name))
@@ -282,23 +286,33 @@ class Handler(object):
 		return data
 
 	def replyentry(self, res):
-		subnodeid, valid1 = res
-		subnode = self.filesystem.getnode(subnodeid)
-		attr, valid2 = subnode.getattr()
-		return dict(nodeid = subnodeid, entry_valid = valid1,
-					attr_valid = valid2, attr = attr)
+		if isinstance(res,tuple):
+			node,entry_valid = res
+		else:
+			node = res
+			entry_valid = node.entry_valid()
+		attr = node.getattr()
+		if isinstance(attr,tuple):
+			attr, attr_valid = attr
+		else:
+			attr_valid = node.attr_valid()
+		self.filesystem.remember(node)
+		return dict(nodeid = node.nodeid, entry_valid = entry_valid,
+					attr_valid = attr_valid, attr = attr)
 
 	def fuse_lookup(self, req, msg):
 		node = self.filesystem.getnode(req.nodeid)
 		res = node.lookup(msg)
 		return self.replyentry(res)
 
-	def fuse_open(self, req, msg, mask=os.O_RDONLY|os.O_WRONLY|os.O_RDWR):
+	def fuse_open(self, req, msg):
 		node = self.filesystem.getnode(req.nodeid)
-		attr, valid = node.getattr()
-		if mode2type(attr.mode) != TYPE_REG:
+		attr = node.getattr()
+		if isinstance(attr,tuple):
+			attr = attr[0]
+		if mode2type(attr["mode"]) != TYPE_REG:
 			raise IOError(errno.EPERM, node)
-		f = node.open(msg.flags & mask)
+		f = node.open(msg.flags)
 		if isinstance(f, tuple):
 			f, open_flags = f
 		else:
@@ -311,8 +325,10 @@ class Handler(object):
 	def fuse_create(self, req, msg):
 		msg, filename = msg
 		node = self.filesystem.getnode(req.nodeid)
-		attr, valid = node.getattr()
-		if mode2type(attr.mode) != TYPE_REG:
+		attr = node.getattr()
+		if isinstance(attr,tuple):
+			attr = attr[0]
+		if mode2type(attr["mode"]) != TYPE_REG:
 			raise IOError(errno.EPERM, node)
 		f = node.create(filename, msg.flags & mask, msg.umask)
 		if isinstance(f, tuple):
@@ -329,8 +345,7 @@ class Handler(object):
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.seek(msg.offset)
-		return f.read(msg.size)
+		return f.read(msg.offset, msg.size)
 
 	def fuse_flush(self, req, msg):
 		try:
@@ -377,57 +392,44 @@ class Handler(object):
 		msg, data = msg
 		try:
 			f = self.filehandles[msg.fh]
-			if not hasattr(f, 'write'):
-				raise IOError(errno.EROFS, "read-only file system")
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.seek(msg.offset)
-		size = f.write(data)
+		size = f.write(msg.offset, data)
 		if size is None: size = len(data)
 		return dict(size = size)
 
 	def fuse_mknod(self, req, msg):
-		if not hasattr(self.filesystem, 'mknod'):
-			self.notsupp_or_ro()
 		msg, filename = msg
 		node = self.filesystem.getnode(req.nodeid)
-		res = node.mknod(filename, msg.mode)
+		res = node.mknod(filename, msg.mode,msg.dev,msg.umask)
 		return self.replyentry(res)
 
 	def fuse_mkdir(self, req, msg):
-		if not hasattr(self.filesystem, 'mkdir'):
-			self.notsupp_or_ro()
 		msg, filename = msg
 		node = self.filesystem.getnode(req.nodeid)
-		res = node.mkdir(filename, msg.mode)
+		res = node.mkdir(filename, msg.mode,msg.umask)
 		return self.replyentry(res)
 
 	def fuse_symlink(self, req, msg):
-		if not hasattr(self.filesystem, 'symlink'):
-			self.notsupp_or_ro()
-		linkname, target = c2pystr2(msg)
+		linkname, target = msg
 		node = self.filesystem.getnode(req.nodeid)
 		res = node.symlink(linkname, target)
 		return self.replyentry(res)
 
 	def fuse_link(self, req, msg):
-		if not hasattr(self.filesystem, 'link'):
-			self.notsupp_or_ro()
 		filename = c2pystr(msg)
-		res = self.filesystem.link(msg.oldnodeid, req.nodeid, target)
+		oldnode = self.filesystem.getnode(req.nodeid)
+		newnode = self.filesystem.getnode(req.nodeid)
+		res = newnode.link(oldnode, target)
 		return self.replyentry(res)
 
 	def fuse_unlink(self, req, msg):
-		if not hasattr(self.filesystem, 'unlink'):
-			self.notsupp_or_ro()
 		filename = msg
 
 		node = self.filesystem.getnode(req.nodeid)
 		node.unlink(filename)
 
 	def fuse_rmdir(self, req, msg):
-		if not hasattr(self.filesystem, 'rmdir'):
-			self.notsupp_or_ro()
 		dirname = msg
 
 		node = self.filesystem.getnode(req.nodeid)
@@ -435,7 +437,7 @@ class Handler(object):
 
 	def fuse_access(self, req, msg):
 		node = self.filesystem.getnode(req.nodeid)
-		node.access(msg.mode)
+		node.access(msg.mask)
 
 	def fuse_interrupt(self, req, msg):
 		# Pass req.unique into every upcall?
@@ -443,6 +445,7 @@ class Handler(object):
 
 	def fuse_forget(self, req, msg):
 		if hasattr(self.filesystem, 'forget'):
+			node = self.filesystem.getnode(req.nodeid)
 			self.filesystem.forget(req.nodeid)
 		raise NoReply
 
@@ -465,8 +468,6 @@ class Handler(object):
 		return target
 
 	def fuse_rename(self, req, msg):
-		if not hasattr(self.filesystem, 'rename'):
-			self.notsupp_or_ro()
 		msg, oldname, newname = msg
 		oldnode = self.filesystem.getnode(req.nodeid)
 		newnode = self.filesystem.getnode(msg.newdir)
@@ -475,7 +476,7 @@ class Handler(object):
 	def getxattrs(self, node):
 		if not hasattr(node, 'getxattrs'):
 			raise IOError(errno.ENOSYS, "xattrs not supported")
-		return node.getxattrs(node)
+		return node.getxattrs()
 
 	def fuse_listxattr(self, req, msg):
 		node = self.filesystem.getnode(req.nodeid)
@@ -534,7 +535,7 @@ class Handler(object):
 		if hasattr(node,'removexattr'):
 			return node.removexattr(msg)
 
-		xattrs = self.getxattrs(req.nodeid)
+		xattrs = self.getxattrs(node)
 		try:
 			del xattrs[msg]
 		except KeyError:
@@ -545,6 +546,7 @@ class Handler(object):
 		if reply is None:
 			reply = ''
 		elif not isinstance(reply, str):
+			print "R",repr(reply)
 			reply = reply.pack()
 		f = fuse_out_header(unique = req.unique,
 							error  = -err,
@@ -581,6 +583,3 @@ class Handler(object):
 		req.done(msg)
 		raise NoReply
 		
-
-class NoReply(Exception):
-	pass

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-from __future__ import division
+# vim: set fileencoding=utf-8
+# vim: ts=4:sw=4:noet:si
 
-##
 ##  Copyright © 2011, Matthias Urlichs <matthias@urlichs.de>
 ##
 ##  This program is free software: you can redistribute it and/or modify
@@ -132,138 +132,145 @@ __all__ = (
 )
 
 class Struct(object):
-    __slots__ = []
+	__slots__ = []
 
-    def __init__(self, data=None, truncate=False, **fields):
-        if data is not None:
-            if truncate:
-                data = data[:self.calcsize()]
-            self.unpack(data)
-        for key, value in fields.items():
-            setattr(self, key, value)
+	def __init__(self, data=None, truncate=False, **fields):
+		if data is not None:
+			if truncate:
+				data = data[:self.calcsize()]
+			self.unpack(data)
+		for key, value in fields.items():
+			setattr(self, key, value)
 
-    def unpack(self, data):
-        data = unpack(self.__types__, data)
-        for key, value in zip(self.__slots__, data):
-            setattr(self, key, value)
+	def unpack(self, data):
+		data = unpack(self.__types__, data)
+		for key, value in zip(self.__slots__, data):
+			setattr(self, key, value)
 
-    def pack(self):
-        return pack(self.__types__, *[getattr(self, k, 0)
-                                      for k in self.__slots__])
-
-	@classmethod
-    def calcsize(cls):
-        return calcsize(cls.__types__)
-
-    def __repr__(self):
-        result = ['%s=%r' % (name, getattr(self, name, None))
-                  for name in self.__slots__]
-        return '<%s %s>' % (self.__class__.__name__, ', '.join(result))
+	def pack(self):
+		return pack(self.__types__, *[getattr(self, k, 0)
+									for k in self.__slots__])
 
 	@classmethod
-    def from_param(cls, msg):
-        limit = cls.calcsize()
-        zero = msg.index('\x00', limit)
-        return cls(msg[:limit]), msg[limit:zero]
+	def calcsize(cls):
+		return calcsize(cls.__types__)
+
+	def __repr__(self):
+		result = ['%s=%r' % (name, getattr(self, name, None))
+				for name in self.__slots__]
+		return '<%s %s>' % (self.__class__.__name__, ', '.join(result))
 
 	@classmethod
-    def from_param2(cls, msg):
-        limit = cls.calcsize()
-        zero1 = msg.index('\x00', limit)
-        zero2 = msg.index('\x00', zero1+1)
-        return cls(msg[:limit]), msg[limit:zero1], msg[zero1+1:zero2]
+	def from_param(cls, msg):
+		limit = cls.calcsize()
+		zero = msg.index('\x00', limit)
+		return cls(msg[:limit]), msg[limit:zero]
 
 	@classmethod
-    def from_head(cls, msg):
-        limit = cls.calcsize()
-        return cls(msg[:limit]), msg[limit:]
+	def from_param2(cls, msg):
+		limit = cls.calcsize()
+		zero1 = msg.index('\x00', limit)
+		zero2 = msg.index('\x00', zero1+1)
+		return cls(msg[:limit]), msg[limit:zero1], msg[zero1+1:zero2]
 
 	@classmethod
-    def from_param_head(cls, msg):
-        limit = cls.calcsize()
-        zero = msg.index('\x00', limit)
-        return cls(msg[:limit]), msg[limit:zero], msg[zero+1:]
+	def from_head(cls, msg):
+		limit = cls.calcsize()
+		return cls(msg[:limit]), msg[limit:]
+
+	@classmethod
+	def from_param_head(cls, msg):
+		limit = cls.calcsize()
+		zero = msg.index('\x00', limit)
+		return cls(msg[:limit]), msg[limit:zero], msg[zero+1:]
 
 class StructWithAttr(Struct):
+	def __init__(self, *args, **keys):
+		attr = keys.get('attr',None)
+		if isinstance(attr,dict):
+			keys['attr'] = fuse_attr(**attr)
+		super(StructWithAttr,self).__init__(*args,**keys)
 
-    def unpack(self, data):
-        limit = -fuse_attr.calcsize()
-        super(StructWithAttr, self).unpack(data[:limit])
-        self.attr = fuse_attr(data[limit:])
+	def unpack(self, data):
+		limit = -fuse_attr.calcsize()
+		super(StructWithAttr, self).unpack(data[:limit])
+		self.attr = fuse_attr(data[limit:])
 
-    def pack(self):
-        return super(StructWithAttr, self).pack() + self.attr.pack()
+	def pack(self):
+		return super(StructWithAttr, self).pack() + self.attr.pack()
 
 	@classmethod
-    def calcsize(cls):
-        return super(StructWithAttr, cls).calcsize() + fuse_attr.calcsize()
+	def calcsize(cls):
+		return super(StructWithAttr, cls).calcsize() + fuse_attr.calcsize()
 
 
 def _mkstruct(name, c, base=Struct):
-    typ2code = {
-        '__u32': 'I',
-        '__s32': 'i',
-        '__u64': 'Q',
-        '__s64': 'q'}
-    slots = []
-    types = ['=']
-    for line in c.split('\n'):
-        line = line.strip()
-        if line:
-            line, tail = line.split(';', 1)
-            typ, nam = line.split()
-            slots.append(nam)
-            types.append(typ2code[typ])
-    cls = type(name, (base,), {'__slots__': slots,
-                                 '__types__': ''.join(types)})
-    globals()[name] = cls
+	typ2code = {
+		'__u16': 'H',
+		'__s16': 'h',
+		'__u32': 'I',
+		'__s32': 'i',
+		'__u64': 'Q',
+		'__s64': 'q'}
+	slots = []
+	types = ['=']
+	for line in c.split('\n'):
+		line = line.strip()
+		if line:
+			line, tail = line.split(';', 1)
+			typ, nam = line.split()
+			slots.append(nam)
+			types.append(typ2code[typ])
+	cls = type(name, (base,), {'__slots__': slots,
+								'__types__': ''.join(types)})
+	globals()[name] = cls
 
 class timeval(object):
-    def __init__(self, attr1, attr2):
-        self.attr_sec = attr1
-        self.attr_nsec = attr2
+	def __init__(self, attr1, attr2):
+		self.attr_sec = attr1
+		self.attr_nsec = attr2
 
-    def __get__(self, obj, typ=None):
-        if obj is None:
-            return self
-        else:
-            return (getattr(obj, self.attr_sec),
-                    getattr(obj, self.attr_nsec))
-
-    def __set__(self, obj, val):
-		if isinstance(val,(tuple,list)):
-        	sec, nsec = val
+	def __get__(self, obj, typ=None):
+		if obj is None:
+			return self
 		else:
-        	val = int(val * 1000000000)
-        	sec, nsec = divmod(val, 1000000000)
-        setattr(obj, self.attr_sec, sec)
-        setattr(obj, self.attr_nsec, nsec)
+			return (getattr(obj, self.attr_sec),
+					getattr(obj, self.attr_nsec))
 
-    def __delete__(self, obj):
-        delattr(obj, self.attr_sec)
-        delattr(obj, self.attr_nsec)
+	def __set__(self, obj, val):
+		if isinstance(val,(tuple,list)):
+			sec, nsec = val
+		else:
+			val = int(val * 1000000000)
+			sec, nsec = divmod(val, 1000000000)
+		setattr(obj, self.attr_sec, sec)
+		setattr(obj, self.attr_nsec, nsec)
+
+	def __delete__(self, obj):
+		delattr(obj, self.attr_sec)
+		delattr(obj, self.attr_nsec)
 
 def _mktimeval(cls, attr):
-    tv = timeval("_"+attr, "_"+attr+"_nsec")
-    setattr(cls, attr, tv)
+	tv = timeval("_"+attr, "_"+attr+"_nsec")
+	setattr(cls, attr, tv)
 
 INVALID_INO = 0xFFFFFFFFFFFFFFFF
 
 def mode2type(mode):
-    return (mode & 0170000) >> 12
+	return (mode & 0170000) >> 12
 
 TYPE_REG = mode2type(stat.S_IFREG)
 TYPE_DIR = mode2type(stat.S_IFDIR)
 TYPE_LNK = mode2type(stat.S_IFLNK)
 
 def c2pystr(s):
-    n = s.index('\x00')
-    return s[:n]
+	n = s.index('\x00')
+	return s[:n]
 
 def c2pystr2(s):
-    first = c2pystr(s)
-    second = c2pystr(s[len(first)+1:])
-    return first, second
+	first = c2pystr(s)
+	second = c2pystr(s[len(first)+1:])
+	return first, second
 
 # ____________________________________________________________
 
@@ -317,7 +324,12 @@ _mkstruct('fuse_kstatfs', '''
 	__u32	namelen;
 	__u32   frsize;
 	__u32   padding;
-	__u32   spare[6];
+	__u32   spare0;
+	__u32   spare1;
+	__u32   spare2;
+	__u32   spare3;
+	__u32   spare4;
+	__u32   spare5;
 ''')
 
 FATTR_MODE	    = 1 << 0
@@ -334,9 +346,13 @@ FATTR_LOCKOWNER = 1 << 9
 #
 # INIT request/reply flags
 #
-# FUSE_EXPORT_SUPPORT: filesystem handles lookups of "." and ".."
-# FUSE_DONT_MASK: don't apply umask to file mode on create operations
-# FUSE_ATOMIC_O_TRUNC: pass O_TRUNC in flags to open(), instead of setattr(size=0)
+# FUSE_ASYNC_READ: perform reading in parallel with other operations.
+# FUSE_POSIX_LOCKS: The file system supports locking.
+# FUSE_FILE_OPS: (apparently unused)
+# FUSE_ATOMIC_O_TRUNC: pass O_TRUNC in flags to open(), instead of calling setattr(size=0)
+# FUSE_EXPORT_SUPPORT: the file system handles listing and lookup of "." and ".." itself
+# FUSE_BIG_WRITES: support larger-than-pagesized write() calls
+# FUSE_DONT_MASK: don't apply umask to file mode within the kernel, userspace code handles it
 #
 FUSE_ASYNC_READ     = 1 << 0
 FUSE_POSIX_LOCKS    = 1 << 1
@@ -437,7 +453,7 @@ FUSE_XATTR_SIZE_MAX = 4096
 _mkstruct('fuse_entry_out', """
 	__u64	nodeid;		/* Inode ID */
 	__u64	generation;	/* Inode generation: nodeid:gen must \
-				   be unique for the fs's lifetime */
+				be unique for the fs's lifetime */
 	__u64	_entry_valid;	/* Cache timeout for the name */
 	__u64	_attr_valid;	/* Cache timeout for the attributes */
 	__u32	_entry_valid_nsec;
@@ -652,9 +668,18 @@ _mkstruct('cuse_init_out', '''
 	__u32   max_write;
 	__u32   dev_major;
 	__u32   dev_minor;
-	__u32   spare[10];
+	__u32   spare0;
+	__u32   spare1;
+	__u32   spare2;
+	__u32   spare3;
+	__u32   spare4;
+	__u32   spare5;
+	__u32   spare6;
+	__u32   spare7;
+	__u32   spare8;
+	__u32   spare9;
 ''')
- 
+
 _mkstruct('fuse_lk_in', '''
 	__u64   fh;
 	__u64   owner;
@@ -692,6 +717,11 @@ _mkstruct('fuse_bmap_in', '''
 
 _mkstruct('fuse_bmap_out', '''
 	__u64   block;
+''')
+
+_mkstruct('fuse_access_in', '''
+	__u32   mask;
+	__u32   padding;
 ''')
 
 _mkstruct('fuse_ioctl_in', '''
@@ -758,7 +788,6 @@ _mkstruct('fuse_notify_retrieve_out','''
 	__u32   padding;
 ''')
 
-/* Matches the size of fuse_write_in */
 _mkstruct('fuse_notify_retrieve_in','''
 	__u64   dummy1;
 	__u64   offset;
@@ -769,74 +798,74 @@ _mkstruct('fuse_notify_retrieve_in','''
 ''')
 
 class fuse_dirent(Struct):
-    __slots__ = ['ino', 'off', 'type', 'name']
+	__slots__ = ['ino', 'off', 'type', 'name']
 
-    def unpack(self, data):
-        self.ino, self.off, namelen, self.type = struct.unpack('QQII',
-                                                               data[:24])
-        self.name = data[24:24+namelen]
-        assert len(self.name) == namelen
+	def unpack(self, data):
+		self.ino, self.off, namelen, self.type = struct.unpack('QQII',
+															data[:24])
+		self.name = data[24:24+namelen]
+		assert len(self.name) == namelen
 
-    def pack(self):
-        namelen = len(self.name)
-        return pack('QQII%ds' % ((namelen+7)&~7,),
-                    self.ino, getattr(self, 'off', 0), namelen,
-                    self.type, self.name)
+	def pack(self):
+		namelen = len(self.name)
+		return pack('QQII%ds' % ((namelen+7)&~7,),
+					self.ino, getattr(self, 'off', 0), namelen,
+					self.type, self.name)
 
-    def calcsize(cls, namelen):
-        return 24 + ((namelen+7)&~7)
-    calcsize = classmethod(calcsize)
+	def calcsize(cls, namelen):
+		return 24 + ((namelen+7)&~7)
+	calcsize = classmethod(calcsize)
 
 # opcodes and messages
 fuse_opcode = {
-    'lookup'        : ( 1, c2pystr,         fuse_entry_out),
-    'forget'        : ( 2, None,            None),  # no reply
-    'getattr'       : ( 3, None,            fuse_attr_out),
-    'setattr'       : ( 4, fuse_setattr_in, fuse_attr_out),
-    'readlink'      : ( 5, None,            None),
-    'symlink'       : ( 6, None,            fuse_entry_out),
-    'mknod'         : ( 8, fuse_mknod_in.from_param, fuse_entry_out),
-    'mkdir'         : ( 9, fuse_mkdir_in.from_param, fuse_entry_out),
-    'unlink'        : (10, c2pystr,         None),
-    'rmdir'         : (11, c2pystr,         None),
-    'rename'        : (12, fuse_rename_in.from_param2, None),
-    'link'          : (13, fuse_link_in,    fuse_entry_out),
-    'open'          : (14, fuse_open_in,    fuse_open_out),
-    'read'          : (15, fuse_read_in,    None),
-    'write'         : (16, fuse_write_in.from_head, fuse_write_out),
-    'statfs'        : (17, None,None),
-    'release'       : (18, fuse_release_in, None),
-    'fsync'         : (20, fuse_fsync_in,   None),
-    'setxattr'      : (21, fuse_setxattr_in.from_param_head,None),
-    'getxattr'      : (22, fuse_getxattr_in.from_param,None),
-    'listxattr'     : (23, fuse_getxattr_in,None),
-    'removexattr'   : (24, c2pystr,         None),
-    'flush'         : (25, fuse_flush_in,   None),
-    'init'          : (26, fuse_init_in,    fuse_init_out),
-    'opendir'       : (27, None,            fuse_open_out),
-    'readdir'       : (28, fuse_read_in,    None),
-    'releasedir'    : (29, fuse_release_in, None),
-    'fsyncdir'      : (30, fuse_fsync_in,   None),
-    'create'        : (35, fuse_create_in.from_param, None),
-    'getlk'         : (31, fuse_lk_in,      fuse_lk_out),
-    'setlk'         : (32, fuse_lk_in,      fuse_lk_out),
-    'setlkw'        : (33, fuse_lk_in,      fuse_lk_out),
-    'access'        : (34, fuse_access_in,  None),
-    'interrupt'     : (36, fuse_interrupt_in,None),
-    'notify_reply'  : (41, None,            None),
-    'batch_forget'  : (42, fuse_batch_forget_in.from_head,None),
+	'lookup'        : ( 1, c2pystr,         fuse_entry_out),
+	'forget'        : ( 2, None,            None),  # no reply
+	'getattr'       : ( 3, None,            fuse_attr_out),
+	'setattr'       : ( 4, fuse_setattr_in, fuse_attr_out),
+	'readlink'      : ( 5, None,            None),
+	'symlink'       : ( 6, c2pystr2,        fuse_entry_out),
+	'mknod'         : ( 8, fuse_mknod_in.from_param, fuse_entry_out),
+	'mkdir'         : ( 9, fuse_mkdir_in.from_param, fuse_entry_out),
+	'unlink'        : (10, c2pystr,         None),
+	'rmdir'         : (11, c2pystr,         None),
+	'rename'        : (12, fuse_rename_in.from_param2, None),
+	'link'          : (13, fuse_link_in,    fuse_entry_out),
+	'open'          : (14, fuse_open_in,    fuse_open_out),
+	'read'          : (15, fuse_read_in,    None),
+	'write'         : (16, fuse_write_in.from_head, fuse_write_out),
+	'statfs'        : (17, None,None),
+	'release'       : (18, fuse_release_in, None),
+	'fsync'         : (20, fuse_fsync_in,   None),
+	'setxattr'      : (21, fuse_setxattr_in.from_param_head,None),
+	'getxattr'      : (22, fuse_getxattr_in.from_param,None),
+	'listxattr'     : (23, fuse_getxattr_in,None),
+	'removexattr'   : (24, c2pystr,         None),
+	'flush'         : (25, fuse_flush_in,   None),
+	'init'          : (26, fuse_init_in,    fuse_init_out),
+	'opendir'       : (27, None,            fuse_open_out),
+	'readdir'       : (28, fuse_read_in,    None),
+	'releasedir'    : (29, fuse_release_in, None),
+	'fsyncdir'      : (30, fuse_fsync_in,   None),
+	'create'        : (35, fuse_create_in.from_param, None),
+	'getlk'         : (31, fuse_lk_in,      fuse_lk_out),
+	'setlk'         : (32, fuse_lk_in,      fuse_lk_out),
+	'setlkw'        : (33, fuse_lk_in,      fuse_lk_out),
+	'access'        : (34, fuse_access_in,  None),
+	'interrupt'     : (36, fuse_interrupt_in,None),
+	'notify_reply'  : (41, None,            None),
+	'batch_forget'  : (42, fuse_batch_forget_in.from_head,None),
 	## not implemented yet
-    #'bmap'          : (37, None,None),
-    #'destroy'       : (38, None,None),
-    #'ioctl'         : (39, None,None),
-    #'poll'          : (40, None,None),
-    #'cuse_init'          : (4096, None,None),
+	#'bmap'          : (37, None,None),
+	#'destroy'       : (38, None,None),
+	#'ioctl'         : (39, None,None),
+	#'poll'          : (40, None,None),
+	#'cuse_init'          : (4096, None,None),
 }
 
 fuse_opcode2name = {}
 def setup():
-    for key, value in fuse_opcode.items():
-        fuse_opcode2name[value[0]] = (key,value[1],value[2])
+	for key, value in fuse_opcode.items():
+		fuse_opcode2name[value[0]] = (key,value[1],value[2])
 setup()
 del setup
 
