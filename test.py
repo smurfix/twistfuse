@@ -5,6 +5,7 @@
 
 from twistfuse.handler import Handler
 from twistfuse.filesystem import FileSystem,Inode,Dir,File
+from twisted.internet import reactor
 
 import errno,os,stat
 
@@ -60,9 +61,7 @@ def main():
 	if not os.path.exists("/tmp/dummy"):
 		os.mkdir("/tmp/dummy", 0o755)
 	h.mount(fs,"/tmp/dummy")
-	try:
-		h.loop_forever()
-	finally:
-		h.umount()
+	reactor.run()
+	h.umount()
 
 main()

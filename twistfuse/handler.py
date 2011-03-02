@@ -11,7 +11,15 @@ from __future__ import division
 ## under the 3-clause MIT license.
 
 from kernel import *
-import os, errno, sys, stat
+import os, errno, sys, stat, socket
+
+from zope.interface import implements
+from twisted.internet import abstract,fdesc,protocol,reactor
+from twisted.internet.defer import maybeDeferred
+from twisted.internet.interfaces import IReadDescriptor
+from twisted.internet.process import Process
+
+from passfd import recvfd
 
 __all__ = ("Handler","NoReply")
 
@@ -19,38 +27,111 @@ class NoReply(Exception):
 	"""Raise this exception to not send a FUSE reply back"""
 	pass
 
-def fuse_mount(mountpoint, opts=None):
-	"""Options is a comma-separated list of FUSE options"""
-	# TODO: call fusermount directly
-	if not isinstance(mountpoint, str):
-		raise TypeError
-	if opts is not None and not isinstance(opts, str):
-		raise TypeError
-	try:
-		import dl
-		fuse = dl.open('libfuse.so.2')
-		if fuse.sym('fuse_mount_compat22'):
-			fnname = 'fuse_mount_compat22'
-		else:
-			fnname = 'fuse_mount'     # older versions of libfuse.so
-		return fuse.call(fnname, mountpoint, opts)
-	except ImportError:
-		import ctypes
-		fuse = ctypes.CDLL('libfuse.so.2')
-		try:
-			fn = fuse.fuse_mount_compat22
-		except AttributeError:
-			fn = fuse.fuse_mount      # older versions of libfuse.so
-		fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
-		fn.restype = ctypes.c_int
-		return fn(mountpoint, opts)
+class FDReader(object):
+	implements(IReadDescriptor)
 
-class Handler(object):
+	def logPrefix(self): return ">FDR"
+
+	def __init__(self,fd,proc):
+		self.fd = fd
+		self.proc = proc
+		fdesc.setNonBlocking(fd)
+		reactor.addReader(self)
+
+	def fileno(self):
+		if self.fd is None: return -1
+		return self.fd.fileno()
+
+	def doRead(self):
+		reactor.removeReader(self)
+		try:
+			fd = recvfd(self.fd)[0]
+		except Exception as e:
+			self._close()
+			print >>sys.stderr,"FD NOREAD",e
+			self.proc.got_no_fd(e)
+		else:
+			self._close()
+			print >>sys.stderr,"FD GOT",fd
+			self.proc.got_fd(fd)
+
+	def _close(self):
+		if self.fd is not None:
+			fd = self.fd
+			self.fd = None
+			reactor.removeReader(self)
+			fd.close()
+			fd = None
+
+	def connectionLost(self,reason):
+		if self.fd is not None:
+			self._close()
+			print >>sys.stderr,"FD READ",reason
+			self.proc.got_no_fd(reason)
+	
+	def __del__(self):
+		if self.fd is not None:
+			self._close()
+
+
+class FMHandler(object):
+	def __init__(self):
+		pass
+	def makeConnection(self,proc):
+		pass
+	def childDataReceived(self, childFD, data):
+		sys.stderr.write(data)
+	def childConnectionLost(self, childFD):
+		pass
+	def processExited(self, reason):
+		print >>sys.stderr,"EXD",repr(reason)
+	def processEnded(self, reason):
+		print >>sys.stderr,"END",repr(reason)
+
+		
+
+class FuseMounter(Process):
+	def __init__(self, handler, mountpoint, opts):
+		self.handler = handler
+		(s0, s1) = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM, 0)
+		args = ["fusermount",mountpoint]
+		if opts:
+			args.extend(["-o",opts])
+
+		s0f = s0.fileno()
+		super(FuseMounter,self).__init__(reactor, "/bin/fusermount", args, {"_FUSE_COMMFD":str(s0f)}, None, FMHandler(), childFDs={0:"w",1:"r",2:"r",s0f:s0f})
+		s0.close()
+		self.fd = FDReader(s1,self)
+
+	def got_fd(self,fd):
+		self.handler.mount_done(fd)
+	def got_no_fd(self,reason):
+		self.handler.mount_error(reason)
+		
+
+class FuseFD(abstract.FileDescriptor):
+	def __init__(self,handler,fd):
+		super(FuseFD,self).__init__()
+		self.fd = fd
+		self.handler = handler
+		reactor.addReader(self)
+		self.connected = True
+	def fileno(self):
+		return self.fd
+	def writeSomeData(self, data):
+		return fdesc.writeToFD(self.fd, data)
+	def doRead(self):
+		return fdesc.readFromFD(self.fd, self.dataReceived)
+	def dataReceived(self, data):
+		self.handler.dataReceived(data)
+
+
+class Handler(object, protocol.Protocol):
 	__system = os.system
 	mountpoint = fd = None
 	__in_header_size  = fuse_in_header.calcsize()
 	__out_header_size = fuse_out_header.calcsize()
-	MAX_READ = FUSE_MAX_IN
+	MAX_LENGTH = FUSE_MAX_IN
 
 	def __init__(self, logfile='STDERR'):
 		if logfile == 'STDERR':
@@ -60,6 +141,15 @@ class Handler(object):
 		self.dirhandles = {}
 		self.notices = {}
 		self.nexth = 1
+		self.data = ""
+		super(Handler,self).__init__()
+
+	def mount_done(self,fd):
+		self.transport = FuseFD(self,fd)
+		self.log('* mounted at %s', self.mountpoint)
+	def mount_error(self,reason):
+		print >>sys.stderr,reason
+		reactor.stop()
 
 	def mount(self,filesystem,mountpoint, **opts1):
 		opts = getattr(filesystem, 'MOUNT_OPTIONS', {}).copy()
@@ -78,20 +168,17 @@ class Handler(object):
 			opts = None
 		self.mountpoint = mountpoint
 		self.filesystem = filesystem
-		fd = fuse_mount(mountpoint, opts)
-		if fd < 0:
-			raise IOError("mount failed")
-		self.fd = fd
-		self.log('* mounted at %s', mountpoint)
+		FuseMounter(self,mountpoint,opts)
 
 	def umount(self):
-		if self.filesystem is not None:
-			fs = self.filesystem
+		fs = self.filesystem
+		if fs is not None:
 			self.filesystem = None
 			fs.stop(False)
-		if self.fd is not None:
-			os.close(self.fd)
+		fd = self.fd
+		if fd is not None:
 			self.fd = None
+			fd.close()
 		if self.mountpoint:
 			cmd = "fusermount -u '%s'" % self.mountpoint.replace("'", r"'\''")
 			self.mountpoint = None
@@ -104,13 +191,13 @@ class Handler(object):
 			self.filesystem = None
 			fs.stop(True)
 		fd = getattr(self,"fd",None)
-		if self.fd is not None:
-			os.close(fd)
+		if fd is not None:
 			self.fd = None
+			fd.close()
 		mountpoint = getattr(self,"mountpoint",None)
 		if mountpoint is not None:
-			cmd = "fusermount -u '%s'" % mountpoint.replace("'", r"'\''")
 			self.mountpoint = None
+			cmd = "fusermount -u '%s'" % mountpoint.replace("'", r"'\''")
 			self.log('* %s', cmd)
 			self.__system(cmd)
 
@@ -119,69 +206,72 @@ class Handler(object):
 			return
 		print >>sys.stderr,s % a
 
-	def loop_forever(self):
-		try:
-			while True:
-				msg = os.read(self.fd, FUSE_MAX_IN)
-				if not msg:
-					raise EOFError("out-kernel connection closed")
-				self.handle_message(msg)
-		except KeyboardInterrupt:
-			return
 
-	def handle_message(self, msg):
+	## Twisted stuff
+
+	def dataReceived(self, data):
+		self.data += data
 		headersize = self.__in_header_size
-		req = fuse_in_header(msg[:headersize])
-		assert req.len == len(msg)
-		name = req.opcode
-		try:
+		if len(self.data) < headersize:
+			return
+		req = fuse_in_header(self.data[:headersize])
+		if len(self.data) < req.len:
+			return
+		msg = self.data[headersize:req.len]
+		self.data = self.data[req.len:]
+
+		name,s_in,s_out = fuse_opcode2name[req.opcode]
+		def doit(msg):
 			try:
-				name,s_in,s_out = fuse_opcode2name[req.opcode]
 				meth = getattr(self, "fuse_"+name)
 			except (IndexError, AttributeError):
 				raise NotImplementedError
-			msg = msg[headersize:]
 			if s_in is not None:
 				msg = s_in(msg)
 			self.log('%s(%d) << %s', name, req.nodeid, msg)
-			reply = meth(req, msg)
-			self.log('   >> %s', repr(reply))
-		except NotImplementedError:
-			self.log('%s: not implemented', name)
-			self.send_reply(req, err=errno.ENOSYS)
-		except EnvironmentError, e:
-			if e.strerror is not None:
-				self.log('%s: %s', name, e)
-			self.send_reply(req, err = e.errno or errno.ESTALE)
-		except NoReply:
-			pass
-		else:
+			return meth(req, msg)
+
+		reply = maybeDeferred(doit,msg)
+		def logReply(r):
+			self.log('   >> %s', repr(r))
+			return r
+		reply.addBoth(logReply)
+
+		def dataHandler(reply):
 			if s_out is not None and hasattr(reply,"items"):
 				reply = s_out(**reply)
 			self.send_reply(req, reply)
+		def errHandler(e):
+			if e.check(NotImplementedError):
+				self.log('%s: not implemented', name)
+				self.send_reply(req, err=errno.ENOSYS)
+			elif e.check(EnvironmentError): # superclass of IOError, OSError
+				if e.value.strerror is not None:
+					self.log('%s: %s', name, e.value.strerror)
+				self.send_reply(req, err = e.value.errno or errno.ESTALE)
+			elif e.check(NoReply):
+				pass
+			else:
+				e.raiseException()
+		reply.addCallbacks(dataHandler,errHandler)
 
 	def send_reply(self, req, reply=None, err=0):
 		assert 0 <= err < 1000
 		if reply is None:
 			reply = ''
 		elif not isinstance(reply, str):
+			print "R",repr(reply)
 			reply = reply.pack()
 		f = fuse_out_header(unique = req.unique,
 							error  = -err,
 							len    = self.__out_header_size + len(reply))
 		data = f.pack() + reply
-		try:
-			while data:
-				count = os.write(self.fd, data)
-				if not count:
-					raise EOFError("in-kernel connection closed")
-				data = data[count:]
-		except OSError, e:
-			if e.errno == errno.ENOENT:  # op interrupted by kernel
-				self.log('operation interrupted')
-			else:
-				raise
+		self.transport.write(data)
 
+	def connectionLost (self, reason=protocol.connectionDone):
+		self.umount()
+		reactor.stop()
+		
 	# ____________________________________________________________
 
 	def fuse_init(self, req, msg):
@@ -541,32 +631,6 @@ class Handler(object):
 		except KeyError:
 			raise IOError(errno.ENODATA, "cannot delete xattr")   # == ENOATTR
 
-	def send_reply(self, req, reply=None, err=0):
-		assert 0 <= err < 1000
-		if reply is None:
-			reply = ''
-		elif not isinstance(reply, str):
-			print "R",repr(reply)
-			reply = reply.pack()
-		f = fuse_out_header(unique = req.unique,
-							error  = -err,
-							len    = self.__out_header_size + len(reply))
-		data = f.pack() + reply
-		self._send_kernel(data)
-
-	def _send_kernel(self, data):
-		try:
-			while data:
-				count = os.write(self.fd, data)
-				if not count:
-					raise EOFError("in-kernel connection closed")
-				data = data[count:]
-		except OSError, e:
-			if e.errno == errno.ENOENT:  # op interrupted by kernel
-				self.log('operation interrupted')
-			else:
-				raise
-
 	def send_notice(self, code, msg):
 		if msg is None:
 			msg = ''
@@ -576,7 +640,7 @@ class Handler(object):
 							error  = code,
 							len    = self.__out_header_size + len(msg))
 		data = f.pack() + msg
-		self._send_kernel(data)
+		self.transport.write(data)
 	
 	def fuse_notify_reply(self, req, msg):
 		req = self.notices.pop(req.unique)
