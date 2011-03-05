@@ -184,7 +184,7 @@ class Inode(object):
 		f.open()
 		return f
 
-	def create(self, name,flags,umask, ctx=None):
+	def create(self, name,flags,mode,umask, ctx=None):
 		"""\
 			Create a new file; return the file object.
 			"""
