@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Test program for TwistFUSE.
+# A simple test program for TwistFUSE.
 
 from twistfuse.handler import Handler
 from twistfuse.filesystem import FileSystem,Inode,Dir,File
@@ -13,7 +13,7 @@ class DummyMain(Inode):
 	def __init__(self,fs):
 		super(DummyMain,self).__init__(fs,1)
 		
-	def lookup(self,name):
+	def lookup(self,name, ctx=None):
 		if name == "dummy":
 			return DummyFileNode(self.filesystem,2)
 		raise IOError(errno.ENOENT,"No entry named %s" % (repr(name,)))
@@ -23,21 +23,22 @@ class DummyMain(Inode):
 
 class DummyFileNode(Inode):
 	content = "FooBar\n"
-	def getattr(self):
+	def getattr(self, ctx=None):
 		return dict(size=len(self.content),mode=stat.S_IFREG|stat.S_IRWXU)
-	def setattr(self,size=None,**kw):
+	def setattr(self, ctx=None, size=None,**kw):
 		if size is not None:
 			self.content = self.content[:size]
 
 class DummyFile(File):
-	def read(self,offset,length):
+	def read(self,offset,length, ctx=None):
 		s = self.node.content
 		if offset >= len(s): return ""
 		if offset > 0: s = s[offset:]
 		if length > len(s): length = len(s)
 		if length < len(s): s = s[:length]
 		return s
-	def write(self,offset,data):
+
+	def write(self,offset,data, ctx=None):
 		s = self.node.content
 		s2 = ""
 		e = offset + len(data)
@@ -46,9 +47,9 @@ class DummyFile(File):
 		self.node.content = s
 
 class DummyMainDir(Dir):
-	def read(self,offset):
+	def read(self,callback,offset, ctx=None):
 		if offset == 0:
-			yield "dummy", stat.S_IFREG|stat.S_IRWXU, 2, 1
+			callback("dummy", stat.S_IFREG|stat.S_IRWXU, 2, 1)
 
 class DummyFS(FileSystem):
 	def __init__(self):

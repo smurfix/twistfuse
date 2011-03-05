@@ -148,8 +148,14 @@ class Struct(object):
 			setattr(self, key, value)
 
 	def pack(self):
-		return pack(self.__types__, *[getattr(self, k, 0)
+		try:
+			return pack(self.__types__, *[getattr(self, k, 0)
 									for k in self.__slots__])
+		except Exception as e:
+			import sys
+			print >>sys.stderr,"E %r: %r %r" % (e,self.__types__, dict(((k,getattr(self, k, 0))
+			                                    for k in self.__slots__)))
+			raise
 
 	@classmethod
 	def calcsize(cls):
@@ -190,6 +196,11 @@ class StructWithAttr(Struct):
 		if isinstance(attr,dict):
 			keys['attr'] = fuse_attr(**attr)
 		super(StructWithAttr,self).__init__(*args,**keys)
+
+	def __repr__(self):
+		result = ['%s=%r' % (name, getattr(self, name, None))
+				for name in self.__slots__]
+		return '<%s %s attr=%s>' % (self.__class__.__name__, ', '.join(result), repr(self.attr))
 
 	def unpack(self, data):
 		limit = -fuse_attr.calcsize()

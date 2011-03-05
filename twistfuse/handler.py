@@ -15,7 +15,7 @@ import os, errno, sys, stat, socket
 
 from zope.interface import implements
 from twisted.internet import abstract,fdesc,protocol,reactor
-from twisted.internet.defer import maybeDeferred
+from twisted.internet.defer import maybeDeferred,inlineCallbacks,returnValue
 from twisted.internet.interfaces import IReadDescriptor
 from twisted.internet.process import Process
 
@@ -25,6 +25,9 @@ __all__ = ("Handler","NoReply")
 
 class NoReply(Exception):
 	"""Raise this exception to not send a FUSE reply back"""
+	pass
+class ExitLoop(StopIteration):
+	"""Special loop break-out exception for readdir, if the buffer gets full"""
 	pass
 
 class FDReader(object):
@@ -220,7 +223,13 @@ class Handler(object, protocol.Protocol):
 		msg = self.data[headersize:req.len]
 		self.data = self.data[req.len:]
 
-		name,s_in,s_out = fuse_opcode2name[req.opcode]
+		try:
+			name,s_in,s_out = fuse_opcode2name[req.opcode]
+		except KeyError:
+			self.log('%d: not implemented', req.opcode)
+			self.send_reply(req, err=errno.ENOSYS)
+			return
+			
 		def doit(msg):
 			try:
 				meth = getattr(self, "fuse_"+name)
@@ -246,21 +255,31 @@ class Handler(object, protocol.Protocol):
 				self.log('%s: not implemented', name)
 				self.send_reply(req, err=errno.ENOSYS)
 			elif e.check(EnvironmentError): # superclass of IOError, OSError
-				if e.value.strerror is not None:
-					self.log('%s: %s', name, e.value.strerror)
-				self.send_reply(req, err = e.value.errno or errno.ESTALE)
+				if e.value.errno is None:
+					errn = e.value.args[0]
+					errs = " ".join(e.value.args[1:])
+				else:
+					errn = e.value.errno
+					errs = e.value.strerror
+				self.log('%s: %d: %s', name, -(errn or 0), errs)
+				self.send_reply(req, err = errn or errno.ESTALE)
 			elif e.check(NoReply):
 				pass
 			else:
-				e.raiseException()
-		reply.addCallbacks(dataHandler,errHandler)
+				print >>sys.stderr,"Bla"
+				e.printTraceback(file=sys.stderr)
+				print >>sys.stderr,"alB"
+				self.send_reply(req, err = errno.ESTALE)
+		reply.addCallback(dataHandler)
+		reply.addErrback(errHandler)
 
 	def send_reply(self, req, reply=None, err=0):
 		assert 0 <= err < 1000
 		if reply is None:
 			reply = ''
+		elif isinstance(reply, unicode):
+			reply = reply.encode("utf-8")
 		elif not isinstance(reply, str):
-			print "R",repr(reply)
 			reply = reply.pack()
 		f = fuse_out_header(unique = req.unique,
 							error  = -err,
@@ -285,20 +304,24 @@ class Handler(object, protocol.Protocol):
 		return rd
 
 
+	@inlineCallbacks
 	def fuse_getattr(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
-		return self._getattr(node)
+		node = yield self.filesystem.getnode(req.nodeid)
+		res = yield self._getattr(node, ctx=req)
+		returnValue( res )
 
-	def _getattr(self,node):
-		attr = node.getattr()
-		if isinstance(attr,tuple):
-			attr, attr_valid = attr
-		else:
-			attr_valid = node.attr_valid()
-		return dict(attr_valid = attr_valid, attr = attr)
+	@inlineCallbacks
+	def _getattr(self,node,ctx):
+		attr = yield node.getattr()
+		if 'attr' not in attr:
+			attr = {'attr':attr}
+			attr['attr_valid'] = (1,0)
+			attr['entry_valid'] = (1,0)
+		returnValue( attr )
 
+	@inlineCallbacks
 	def fuse_setattr(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
+		node = yield self.filesystem.getnode(req.nodeid)
 		values = {}
 		if msg.valid & FATTR_MODE:
 			values['mode'] = msg.mode & 0777
@@ -312,8 +335,9 @@ class Handler(object, protocol.Protocol):
 			values['atime'] = msg.atime
 		if msg.valid & FATTR_MTIME:
 			values['mtime'] = msg.mtime
-		node.setattr(**values)
-		return self._getattr(node)
+		node.setattr(ctx=req, **values)
+		res = yield self._getattr(node, ctx=req)
+		returnValue( res )
 
 	def fuse_release(self, req, msg):
 		try:
@@ -321,7 +345,7 @@ class Handler(object, protocol.Protocol):
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
 		else:
-			f.release()
+			return f.release(ctx=req)
 
 	def fuse_releasedir(self, req, msg):
 		try:
@@ -329,28 +353,30 @@ class Handler(object, protocol.Protocol):
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
 		else:
-			f.release()
+			return f.release(ctx=req)
 
+	@inlineCallbacks
 	def fuse_opendir(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
-		attr = node.getattr()
-		if isinstance(attr,tuple):
-			attr = attr[0]
+		node = yield self.filesystem.getnode(req.nodeid)
+		attr = yield node.getattr()
+		if 'attr' in attr:
+			attr = attr['attr']
 		if mode2type(attr['mode']) != TYPE_DIR:
 			raise IOError(errno.ENOTDIR, node)
-		f = node.opendir()
+		f = yield node.opendir(ctx=req)
 		fh = self.nexth
 		self.nexth += 1
 		self.dirhandles[fh] = f
-		return dict(fh = fh)
+		returnValue( dict(fh = fh) )
 
 	def fuse_fsyncdir(self, req, msg):
 		try:
 			f = self.dirhandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.sync(msg.fsync_flags)
+		return f.sync(msg.fsync_flags, ctx=req)
 
+	@inlineCallbacks
 	def fuse_readdir(self, req, msg):
 		try:
 			f = self.dirhandles[msg.fh]
@@ -358,51 +384,61 @@ class Handler(object, protocol.Protocol):
 			raise IOError(errno.EBADF, msg.fh)
 		# start or rewind
 		d_entries = []
-		length = 0
-		print "RD",msg.offset,msg.size
-		for name, type, inode, off in f.read(offset=msg.offset):
-			print "E",name, type, inode, off
+		length = [0]
+
+		def _read_cb(name, type, inode, off):
+			if isinstance(name,unicode):
+				name = name.encode("utf-8")
 			d_entry = fuse_dirent(ino  = inode,
 			                      off  = off,
 			                      type = type,
 			                      name = name)
 			d_len = fuse_dirent.calcsize(len(name))
-			if length+d_len > msg.size:
-				break
+			if length[0]+d_len > msg.size:
+				raise ExitLoop
 			d_entries.append(d_entry)
-			length += fuse_dirent.calcsize(len(name))
+			length[0] += fuse_dirent.calcsize(len(name))
 
+		try:
+			yield f.read(_read_cb, offset=msg.offset, ctx=req)
+		except ExitLoop:
+			pass
 		data = ''.join([d.pack() for d in d_entries])
-		return data
+		returnValue( data )
 
+	@inlineCallbacks
 	def replyentry(self, res):
 		if isinstance(res,tuple):
 			node,entry_valid = res
 		else:
 			node = res
 			entry_valid = node.entry_valid()
-		attr = node.getattr()
-		if isinstance(attr,tuple):
-			attr, attr_valid = attr
-		else:
-			attr_valid = node.attr_valid()
-		self.filesystem.remember(node)
-		return dict(nodeid = node.nodeid, entry_valid = entry_valid,
-					attr_valid = attr_valid, attr = attr)
+		attr = yield node.getattr()
+		if 'attr' not in attr:
+			attr = {'attr': attr}
+		if 'attr_valid' not in attr:
+			attr['attr_valid'] = node.attr_valid()
+		if 'entry_valid' not in attr:
+			attr['entry_valid'] = entry_valid
+		yield self.filesystem.remember(node)
+		returnValue( attr )
 
+	@inlineCallbacks
 	def fuse_lookup(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
-		res = node.lookup(msg)
-		return self.replyentry(res)
+		node = yield self.filesystem.getnode(req.nodeid)
+		res = yield node.lookup(msg)
+		res = yield self.replyentry(res)
+		returnValue( res )
 
+	@inlineCallbacks
 	def fuse_open(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
-		attr = node.getattr()
-		if isinstance(attr,tuple):
-			attr = attr[0]
+		node = yield self.filesystem.getnode(req.nodeid)
+		attr = yield node.getattr()
+		if 'attr' in attr:
+			attr = attr['attr']
 		if mode2type(attr["mode"]) != TYPE_REG:
 			raise IOError(errno.EPERM, node)
-		f = node.open(msg.flags)
+		f = yield node.open(msg.flags, ctx=req)
 		if isinstance(f, tuple):
 			f, open_flags = f
 		else:
@@ -410,17 +446,18 @@ class Handler(object, protocol.Protocol):
 		fh = self.nexth
 		self.nexth += 1
 		self.filehandles[fh] = f
-		return dict(fh = fh, open_flags = open_flags)
+		returnValue( dict(fh = fh, open_flags = open_flags) )
 
+	@inlineCallbacks
 	def fuse_create(self, req, msg):
 		msg, filename = msg
-		node = self.filesystem.getnode(req.nodeid)
-		attr = node.getattr()
+		node = yield self.filesystem.getnode(req.nodeid)
+		attr = yield node.getattr()
 		if isinstance(attr,tuple):
 			attr = attr[0]
 		if mode2type(attr["mode"]) != TYPE_REG:
 			raise IOError(errno.EPERM, node)
-		f = node.create(filename, msg.flags & mask, msg.umask)
+		f = yield node.create(filename, msg.flags, msg.umask, ctx=req)
 		if isinstance(f, tuple):
 			f, open_flags = f
 		else:
@@ -428,115 +465,133 @@ class Handler(object, protocol.Protocol):
 		fh = self.nexth
 		self.nexth += 1
 		self.filehandles[fh] = f
-		return dict(fh = fh, open_flags = open_flags)
+		returnValue( dict(fh = fh, open_flags = open_flags) )
 
 	def fuse_read(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		return f.read(msg.offset, msg.size)
+		return f.read(msg.offset, msg.size, ctx=req)
 
 	def fuse_flush(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.flush(msg.flush_flags)
+		return f.flush(msg.flush_flags, ctx=req)
 
 	def fuse_fsync(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.sync(msg.fsync_flags)
+		return f.sync(msg.fsync_flags, ctx=req)
 
+	@inlineCallbacks
 	def fuse_getlk(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.getlock(msg.start,msg.end,msg.type)
-		return dict(start = msg.start, end = msg.end,
-		            type = msg.type, pid = msg.pid)
+		yield f.getlock(msg.start,msg.end,msg.type, ctx=req)
+		returnValue( dict(start = msg.start, end = msg.end,
+		             type = msg.type, pid = msg.pid) )
 		
+	@inlineCallbacks
 	def fuse_setlk(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.setlock(msg.start,msg.end,msg.type, wait=0)
-		return dict(start = msg.start, end = msg.end,
-		            type = msg.type, pid = msg.pid)
+		yield f.setlock(msg.start,msg.end,msg.type, wait=0, ctx=req)
+		returnValue( dict(start = msg.start, end = msg.end,
+		             type = msg.type, pid = msg.pid) )
 		
+	@inlineCallbacks
 	def fuse_setlkw(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		f.setlock(msg.start,msg.end,msg.type, wait=1)
-		return dict(start = msg.start, end = msg.end,
-		            type = msg.type, pid = msg.pid)
+		yield f.setlock(msg.start,msg.end,msg.type, wait=1, ctx=req)
+		returnValue( dict(start = msg.start, end = msg.end,
+		             type = msg.type, pid = msg.pid) )
 		
+	@inlineCallbacks
 	def fuse_write(self, req, msg):
 		msg, data = msg
 		try:
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		size = f.write(msg.offset, data)
+		size = yield f.write(msg.offset, data, ctx=req)
 		if size is None: size = len(data)
-		return dict(size = size)
+		returnValue( dict(size = size) )
 
+	@inlineCallbacks
 	def fuse_mknod(self, req, msg):
 		msg, filename = msg
-		node = self.filesystem.getnode(req.nodeid)
-		res = node.mknod(filename, msg.mode,msg.dev,msg.umask)
-		return self.replyentry(res)
+		node = yield self.filesystem.getnode(req.nodeid)
+		res = yield node.mknod(filename, msg.mode,msg.dev,msg.umask, ctx=req)
+		res = yield self.replyentry(res)
+		returnValue( res )
 
+	@inlineCallbacks
 	def fuse_mkdir(self, req, msg):
 		msg, filename = msg
-		node = self.filesystem.getnode(req.nodeid)
-		res = node.mkdir(filename, msg.mode,msg.umask)
-		return self.replyentry(res)
+		node = yield self.filesystem.getnode(req.nodeid)
+		res = yield node.mkdir(filename, msg.mode,msg.umask, ctx=req)
+		res = yield self.replyentry(res)
+		returnValue( res )
 
+	@inlineCallbacks
 	def fuse_symlink(self, req, msg):
 		linkname, target = msg
-		node = self.filesystem.getnode(req.nodeid)
-		res = node.symlink(linkname, target)
-		return self.replyentry(res)
+		node = yield self.filesystem.getnode(req.nodeid)
+		res = yield node.symlink(linkname, target, ctx=req)
+		res = yield self.replyentry(res)
+		returnValue( res )
 
+	@inlineCallbacks
 	def fuse_link(self, req, msg):
 		filename = c2pystr(msg)
-		oldnode = self.filesystem.getnode(req.nodeid)
-		newnode = self.filesystem.getnode(req.nodeid)
-		res = newnode.link(oldnode, target)
-		return self.replyentry(res)
+		oldnode = yield self.filesystem.getnode(req.nodeid)
+		newnode = yield self.filesystem.getnode(req.nodeid)
+		res = yield newnode.link(oldnode, target, ctx=req)
+		res = yield self.replyentry(res)
+		returnValue( res )
 
+	@inlineCallbacks
 	def fuse_unlink(self, req, msg):
 		filename = msg
 
-		node = self.filesystem.getnode(req.nodeid)
-		node.unlink(filename)
+		node = yield self.filesystem.getnode(req.nodeid)
+		yield node.unlink(filename, ctx=req)
+		returnValue( None )
 
+	@inlineCallbacks
 	def fuse_rmdir(self, req, msg):
 		dirname = msg
 
-		node = self.filesystem.getnode(req.nodeid)
-		node.rmdir(dirname)
+		node = yield self.filesystem.getnode(req.nodeid)
+		yield node.rmdir(dirname, ctx=req)
+		returnValue( None )
 
+	@inlineCallbacks
 	def fuse_access(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
-		node.access(msg.mask)
+		node = yield self.filesystem.getnode(req.nodeid)
+		yield node.access(msg.mask, ctx=req)
+		returnValue( None )
 
 	def fuse_interrupt(self, req, msg):
 		# Pass req.unique into every upcall?
 		raise IOError(errno.ENOSYS, "interrupt not supported")
 
+	@inlineCallbacks
 	def fuse_forget(self, req, msg):
-		if hasattr(self.filesystem, 'forget'):
-			node = self.filesystem.getnode(req.nodeid)
-			self.filesystem.forget(req.nodeid)
+		node = yield self.filesystem.getnode(req.nodeid)
+		yield self.filesystem.forget(node)
 		raise NoReply
 
 	def fuse_batch_forget(self, req, msg):
@@ -550,30 +605,31 @@ class Handler(object, protocol.Protocol):
 				offset += size
 		raise NoReply
 
+	@inlineCallbacks
 	def fuse_readlink(self, req, msg):
-		if not hasattr(self.filesystem, 'readlink'):
-			raise IOError(errno.ENOSYS, "readlink not supported")
-		node = self.filesystem.getnode(req.nodeid)
-		target = node.readlink()
-		return target
+		node = yield self.filesystem.getnode(req.nodeid)
+		target = yield node.readlink(ctx=req)
+		returnValue( target )
 
+	@inlineCallbacks
 	def fuse_rename(self, req, msg):
 		msg, oldname, newname = msg
-		oldnode = self.filesystem.getnode(req.nodeid)
-		newnode = self.filesystem.getnode(msg.newdir)
-		self.filesystem.rename(oldnode, oldname, newnode, newname)
+		oldnode = yield self.filesystem.getnode(req.nodeid)
+		newnode = yield self.filesystem.getnode(msg.newdir)
+		yield self.filesystem.rename(oldnode, oldname, newnode, newname, ctx=req)
+		returnValue( None )
 
 	def getxattrs(self, node):
-		if not hasattr(node, 'getxattrs'):
-			raise IOError(errno.ENOSYS, "xattrs not supported")
 		return node.getxattrs()
 
+	@inlineCallbacks
 	def fuse_listxattr(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
-		if hasattr(node,'listxattr'):
-			names = node.listxattr()
+		node = yield self.filesystem.getnode(req.nodeid)
+		if hasattr(node,'listxattrs'):
+			names = yield node.listxattrs(ctx=req)
 		else:
-			names = self.getxattrs(node).keys()
+			names = yield node.getxattrs(ctx=req)
+			names = names.keys()
 
 		totalsize = 0
 		for name in names:
@@ -582,17 +638,18 @@ class Handler(object, protocol.Protocol):
 			if msg.size < totalsize:
 				raise IOError(errno.ERANGE, "buffer too small")
 			names.append('')
-			return '\x00'.join(names)
+			returnValue( '\x00'.join(names) )
 		else:
-			return fuse_getxattr_out(size=totalsize)
+			returnValue( fuse_getxattr_out(size=totalsize) )
 
+	@inlineCallbacks
 	def fuse_getxattr(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
+		node = yield self.filesystem.getnode(req.nodeid)
 		msg, name = msg
 		if hasattr(node,'getxattr'):
-			value = node.getxattr(msg,name)
+			value = yield node.getxattr(name, ctx=req)
 		else:
-			xattrs = self.getxattrs(node)
+			xattrs = yield node.getxattrs(ctx=req)
 			try:
 				value = xattrs[name]
 			except KeyError:
@@ -602,34 +659,39 @@ class Handler(object, protocol.Protocol):
 		if msg.size > 0:
 			if msg.size < len(value):
 				raise IOError(errno.ERANGE, "buffer too small")
-			return value
+			returnValue( value )
 		else:
-			return fuse_getxattr_out(size=len(value))
+			returnValue( fuse_getxattr_out(size=len(value)) )
 
+	@inlineCallbacks
 	def fuse_setxattr(self, req, msg):
-		node = self.filesystem.getnode(req.nodeid)
+		node = yield self.filesystem.getnode(req.nodeid)
 		msg, name, value = msg
 		assert len(value) == msg.size
 		if hasattr(node,'setxattr'):
-			return node.setxattr(msg,name,value)
+			res = yield node.setxattr(name,value, ctx=req)
+			returnValue( res )
 
-		xattrs = self.getxattrs(node)
+		xattrs = yield node.getxattrs(ctx=req)
 		# XXX msg.flags ignored
 		try:
 			xattrs[name] = value
 		except KeyError:
 			raise IOError(errno.ENODATA, "cannot set xattr")    # == ENOATTR
 
+	@inlineCallbacks
 	def fuse_removexattr(self, req, msg):
-		node = self.filesystem.getnode(node)
+		node = yield self.filesystem.getnode(node)
 		if hasattr(node,'removexattr'):
-			return node.removexattr(msg)
+			res = yield node.removexattr(msg, ctx=req)
+			returnValue( res )
 
-		xattrs = self.getxattrs(node)
+		xattrs = yield node.getxattrs(ctx=req)
 		try:
 			del xattrs[msg]
 		except KeyError:
 			raise IOError(errno.ENODATA, "cannot delete xattr")   # == ENOATTR
+		returnValue( None )
 
 	def send_notice(self, code, msg):
 		if msg is None:

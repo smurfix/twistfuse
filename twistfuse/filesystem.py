@@ -27,7 +27,7 @@ class File(object):
 	
 	def __init__(self,node,mode):
 		self.node = node
-		self.mode = mode & O_MODE_MASK
+		self.mode = mode
 	
 	def open(self):
 		"""\
@@ -67,11 +67,11 @@ class File(object):
 			"""
 		pass
 
-	def fsync(self, flags):
+	def sync(self, flags):
 		"""\
 			Sync cached data to disk.
 			"""
-		pass
+		return self.node.sync(flags)
 
 	def getlock(self, start,end, type):
 		"""\
@@ -109,19 +109,19 @@ class Dir(object):
 
 	def sync(self, flags):
 		"""\
-			fsync() on myself.
+			sync() on myself.
 			"""
-		pass
+		return self.node.sync(flags)
 
-	def read(self, offset=0):
+	def read(self, callback, offset=0):
 		"""\
-			Return entries: generate (name,type,inode,offset) tuples.
+			Return entries: callback with (name,type,inode,offset) tuples.
 
 			Note that the offset points to the _next_ entry.
 
 			Do not return "." or ".." entries.
 			"""
-		return ()
+		pass
 
 
 class Inode(object):
@@ -132,7 +132,7 @@ class Inode(object):
 		"""
 	nodeid = None
 
-	def __init__(self,filesystem,nodeid):
+	def __init__(self,filesystem,nodeid, ctx=None):
 		self.filesystem = filesystem
 		self.nodeid = nodeid
 
@@ -146,7 +146,7 @@ class Inode(object):
 			"""
 		raise NotImplementedError("You need to override Inode.getattr")
 	
-	def setattr(self, **attrs):
+	def setattr(self, ctx=None, **attrs):
 		"""\
 			Set the given attributes (plus ctime).
 			Any not in @attrs should be left alone.
@@ -174,17 +174,23 @@ class Inode(object):
 			"""
 		return (10,0)
 
-	def open(self,mode):
+	def open(self,mode, ctx=None):
 		"""\
 			If I am a file, open me.
 
-			The default implementation uses a filesystem.FileType object.
+			The default implementation simply creates a filesystem.FileType object.
 			"""
 		f = self.filesystem.FileType(self,mode)
 		f.open()
 		return f
 
-	def opendir(self):
+	def create(self, name,flags,umask, ctx=None):
+		"""\
+			Create a new file; return the file object.
+			"""
+		raise IOError(errno.EROFS, "File.create is not implemented")
+
+	def opendir(self, ctx=None):
 		"""\
 			If I am a directory, open me.
 
@@ -194,7 +200,7 @@ class Inode(object):
 		d.open()
 		return d
 
-	def lookup(self, name):
+	def lookup(self, name, ctx=None):
 		"""\
 			Return a named child (if I am a directory).
 
@@ -208,61 +214,61 @@ class Inode(object):
 			"""
 		pass
 
-	def forget(self):
+	def forget(self, ctx=None):
 		"""\
 			This node is being dropped from the cache.
 			"""
 		pass
 
-	def mknod(self, filename, mode, dev, umask):
+	def mknod(self, filename, mode, dev, umask, ctx=None):
 		"""\
 			Create a new device node.
 			"""
 		raise IOError(errno.EROFS, "File.mknod is not implemented")
 
-	def mkdir(self, filename, mode, umask):
+	def mkdir(self, filename, mode, umask, ctx=None):
 		"""\
 			Create a new directory.
 			"""
 		raise IOError(errno.EROFS, "File.mkdir is not implemented")
 
-	def symlink(self, filename, target):
+	def symlink(self, filename, target, ctx=None):
 		"""\
 			Create a new symbolic link.
 			"""
 		raise IOError(errno.EROFS, "File.symlink is not implemented")
 
-	def readlink(self):
+	def readlink(self, ctx=None):
 		"""\
 			Return my contents, if I am a symlink.
 			"""
 		raise IOError(errno.ENOSYS, "File.readlink is not implemented")
 
-	def link(self, oldnode, target):
+	def link(self, oldnode, target, ctx=None):
 		"""\
 			Create a new hard link.
 			"""
 		raise IOError(errno.EROFS, "File.link is not implemented")
 
-	def unlink(self, target):
+	def unlink(self, target, ctx=None):
 		"""\
 			Remove a non-directory.
 			"""
 		raise IOError(errno.EROFS, "File.unlink is not implemented")
 
-	def rmdir(self, target):
+	def rmdir(self, target, ctx=None):
 		"""\
 			Remove a directory.
 			"""
 		raise IOError(errno.EROFS, "File.rmdir is not implemented")
 
-	def access(self, mask):
+	def access(self, mask, ctx=None):
 		"""\
 			Check whether file access is allowed
 			"""
 		raise IOError(errno.ENOSYS, "File.access is not implemented")
 
-	def getxattrs(self):
+	def getxattrs(self, ctx=None):
 		"""\
 			Return a (name,value) dictionary for this node.
 
@@ -276,6 +282,12 @@ class Inode(object):
 			Note that values may be arbitrary binary data!
 			"""
 		raise IOError(errno.ENOSYS, "Extended attributes are not implemented")
+	
+	def sync(self, ctx=None):
+		"""\
+			Save my attributes.
+			"""
+		pass
 
 
 class FileSystem(object):
@@ -289,6 +301,7 @@ class FileSystem(object):
 	MOUNT_OPTIONS = {}
 	FileType = File
 	DirType = Dir
+	rootnodeid = None
 	def __init__(self, root, filetype=None,dirtype=None):
 		"""\
 			Setup. You need to either pass in a root inode.
@@ -298,12 +311,12 @@ class FileSystem(object):
 			"""
 
 		self.nodes = {}
+		self.rootnodeid = root.nodeid
 
 		if filetype:
 			self.FileType = filetype
 		if dirtype:
 			self.DirType = dirtype
-		assert root.nodeid == 1, "The root node needs to have nodeid==1, not %s" % (repr(root.nodeid),)
 		self.remember(root)
 
 	def mount(self, handler, flags):
@@ -332,6 +345,8 @@ class FileSystem(object):
 			Given an inode (as returned by .lookup()), return the
 			corresponding object.
 			"""
+		if nodeid == 1:
+			nodeid = self.rootnodeid
 		return self.nodes[nodeid]
 
 	def remember(self, node):
@@ -345,12 +360,13 @@ class FileSystem(object):
 		"""\
 			Drop this node from the cache.
 			"""
-		if nodeid == 1:
+		if nodeid == self.rootnodeid:
+			nodes[nodeid].sync()
 			return # the root node cannot be dropped from the cache
 		node = self.nodes.pop(nodeid)
 		node.forget()
 
-	def rename(self, oldnode, oldname, newnode, newname):
+	def rename(self, oldnode, oldname, newnode, newname, ctx=None):
 		"""\
 			Rename an entry.
 			The destination, if it exists, is overwritten atomically.
