@@ -12,6 +12,7 @@ from __future__ import division
 
 from kernel import *
 import os, errno, sys, stat, socket
+from traceback import print_exc
 
 from zope.interface import implements
 from twisted.internet import abstract,fdesc,protocol,reactor
@@ -51,11 +52,9 @@ class FDReader(object):
 			fd = recvfd(self.fd)[0]
 		except Exception as e:
 			self._close()
-			print >>sys.stderr,"FD NOREAD",e
 			self.proc.got_no_fd(e)
 		else:
 			self._close()
-			print >>sys.stderr,"FD GOT",fd
 			self.proc.got_fd(fd)
 
 	def _close(self):
@@ -69,7 +68,6 @@ class FDReader(object):
 	def connectionLost(self,reason):
 		if self.fd is not None:
 			self._close()
-			print >>sys.stderr,"FD READ",reason
 			self.proc.got_no_fd(reason)
 	
 	def __del__(self):
@@ -87,9 +85,9 @@ class FMHandler(object):
 	def childConnectionLost(self, childFD):
 		pass
 	def processExited(self, reason):
-		print >>sys.stderr,"EXD",repr(reason)
+		pass
 	def processEnded(self, reason):
-		print >>sys.stderr,"END",repr(reason)
+		pass
 
 		
 
@@ -266,9 +264,7 @@ class Handler(object, protocol.Protocol):
 			elif e.check(NoReply):
 				pass
 			else:
-				print >>sys.stderr,"Bla"
 				e.printTraceback(file=sys.stderr)
-				print >>sys.stderr,"alB"
 				self.send_reply(req, err = errno.ESTALE)
 		reply.addCallback(dataHandler)
 		reply.addErrback(errHandler)
@@ -285,7 +281,15 @@ class Handler(object, protocol.Protocol):
 							error  = -err,
 							len    = self.__out_header_size + len(reply))
 		data = f.pack() + reply
-		self.transport.write(data)
+		try:
+			#self.transport.write(data)
+			l = os.write(self.transport.fileno(),data)
+			if l != len(data):
+				raise RuntimeError("could not write to FUSE socket")
+		except Exception as e:
+			print_exc(file=sys.stderr)
+			self.connectionLost(e)
+			
 
 	def connectionLost (self, reason=protocol.connectionDone):
 		self.umount()
@@ -453,11 +457,11 @@ class Handler(object, protocol.Protocol):
 		msg, filename = msg
 		node = yield self.filesystem.getnode(req.nodeid)
 		attr = yield node.getattr()
-		if isinstance(attr,tuple):
-			attr = attr[0]
-		if mode2type(attr["mode"]) != TYPE_REG:
+		if 'attr' in attr:
+			attr = attr['attr']
+		if mode2type(attr["mode"]) != TYPE_DIR:
 			raise IOError(errno.EPERM, node)
-		f = yield node.create(filename, msg.flags, msg.umask, ctx=req)
+		f = yield node.create(filename, msg.flags, msg.mode, msg.umask, ctx=req)
 		if isinstance(f, tuple):
 			f, open_flags = f
 		else:
@@ -702,7 +706,14 @@ class Handler(object, protocol.Protocol):
 							error  = code,
 							len    = self.__out_header_size + len(msg))
 		data = f.pack() + msg
-		self.transport.write(data)
+		try:
+			#self.transport.write(data)
+			l = os.write(self.transport.fileno(),data)
+			if l != len(data):
+				raise RuntimeError("could not write notification to FUSE socket")
+		except Exception as e:
+			print_exc(file=sys.stderr)
+			self.connectionLost(e)
 	
 	def fuse_notify_reply(self, req, msg):
 		req = self.notices.pop(req.unique)
