@@ -29,8 +29,8 @@ install-prereq: build-stamp
 	dh_clean -k
 
 install-python%: install-prereq
-	python$* setup.py install --root=debian/python-sqlmix
-	find debian/python-sqlmix -name '*.py[co]' -print0 | xargs -0r rm -f
+	python$* setup.py install --root=debian/python-twistfuse
+	find debian/python-twistfuse -name '*.py[co]' -print0 | xargs -0r rm -f
 
 binary-indep: build install
 	dh_testdir
