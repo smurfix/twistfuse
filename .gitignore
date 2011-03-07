@@ -7,3 +7,4 @@ debian/files
 debian/*.log
 debian/*.substvars
 debian/python-twistfuse
+debian/*.debhelper
