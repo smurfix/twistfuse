@@ -164,7 +164,7 @@ class Handler(object, protocol.Protocol):
 					optlist.append(item[0])
 				else:
 					optlist.append('%s=%s' % item)
-			opts = ' '.join(optlist)
+			opts = ','.join(optlist)
 		else:
 			opts = None
 		self.mountpoint = mountpoint
@@ -462,14 +462,20 @@ class Handler(object, protocol.Protocol):
 		if mode2type(attr["mode"]) != TYPE_DIR:
 			raise IOError(errno.EPERM, node)
 		f = yield node.create(filename, msg.flags, msg.mode, msg.umask, ctx=req)
-		if isinstance(f, tuple):
-			f, open_flags = f
+		inode = f[0]
+		if len(f) > 2:
+			open_flags = f[2]
 		else:
 			open_flags = 0
+		f = f[1]
+
 		fh = self.nexth
 		self.nexth += 1
 		self.filehandles[fh] = f
-		returnValue( dict(fh = fh, open_flags = open_flags) )
+		res = yield self.replyentry(inode)
+		res['open'] = {'fh':fh, 'open_flags':open_flags }
+		returnValue( res )
+
 
 	def fuse_read(self, req, msg):
 		try:
@@ -537,7 +543,7 @@ class Handler(object, protocol.Protocol):
 	def fuse_mknod(self, req, msg):
 		msg, filename = msg
 		node = yield self.filesystem.getnode(req.nodeid)
-		res = yield node.mknod(filename, msg.mode,msg.dev,msg.umask, ctx=req)
+		res = yield node.mknod(filename, msg.mode,msg.rdev,msg.umask, ctx=req)
 		res = yield self.replyentry(res)
 		returnValue( res )
 
@@ -559,8 +565,8 @@ class Handler(object, protocol.Protocol):
 
 	@inlineCallbacks
 	def fuse_link(self, req, msg):
-		filename = c2pystr(msg)
-		oldnode = yield self.filesystem.getnode(req.nodeid)
+		msg, target = msg
+		oldnode = yield self.filesystem.getnode(msg.oldnodeid)
 		newnode = yield self.filesystem.getnode(req.nodeid)
 		res = yield newnode.link(oldnode, target, ctx=req)
 		res = yield self.replyentry(res)
@@ -594,11 +600,14 @@ class Handler(object, protocol.Protocol):
 
 	@inlineCallbacks
 	def fuse_forget(self, req, msg):
+		print >>sys.stderr,"FORGET",repr(req),repr(msg)
+
 		node = yield self.filesystem.getnode(req.nodeid)
 		yield self.filesystem.forget(node)
 		raise NoReply
 
 	def fuse_batch_forget(self, req, msg):
+		print >>sys.stderr,"BFORGET",repr(req),repr(msg)
 		if hasattr(self.filesystem, 'forget'):
 			msg, data = msg
 			size = fuse_forget_one.calcsize()

@@ -186,7 +186,7 @@ class Inode(object):
 
 	def create(self, name,flags,mode,umask, ctx=None):
 		"""\
-			Create a new file; return the file object.
+			Create a new file; return an (inode, filehandle) tuple
 			"""
 		raise IOError(errno.EROFS, "File.create is not implemented")
 
@@ -356,14 +356,14 @@ class FileSystem(object):
 		node.remember()
 		self.nodes[node.nodeid] = node
 
-	def forget(self,nodeid):
+	def forget(self,node):
 		"""\
 			Drop this node from the cache.
 			"""
-		if nodeid == self.rootnodeid:
-			nodes[nodeid].sync()
+		if node.nodeid == self.rootnodeid:
+			nodes[node.nodeid].sync()
 			return # the root node cannot be dropped from the cache
-		node = self.nodes.pop(nodeid)
+		del self.nodes[node.nodeid]
 		node.forget()
 
 	def rename(self, oldnode, oldname, newnode, newname, ctx=None):

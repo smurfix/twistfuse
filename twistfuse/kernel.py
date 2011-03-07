@@ -214,6 +214,30 @@ class StructWithAttr(Struct):
 	def calcsize(cls):
 		return super(StructWithAttr, cls).calcsize() + fuse_attr.calcsize()
 
+class StructWithAttrOpen(StructWithAttr):
+	def __init__(self, *args, **keys):
+		oattr = keys.get('open',None)
+		if isinstance(oattr,dict):
+			keys['open'] = fuse_open_out(**oattr)
+		super(StructWithAttrOpen,self).__init__(*args,**keys)
+
+	def __repr__(self):
+		result = ['%s=%r' % (name, getattr(self, name, None))
+				for name in self.__slots__]
+		return '<%s %s attr=%s open=%s>' % (self.__class__.__name__, ', '.join(result), repr(self.attr), repr(self.open))
+
+	def unpack(self, data):
+		limit = super(StructWithAttrOpen,self).calcsize()
+		super(StructWithAttrOpen, self).unpack(data[:limit])
+		self.open = fuse_open_out(data[limit:])
+
+	def pack(self):
+		return super(StructWithAttrOpen, self).pack() + self.open.pack()
+
+	@classmethod
+	def calcsize(cls):
+		return super(StructWithAttrOpen, cls).calcsize() + fuse_open_out.calcsize()
+
 
 def _mkstruct(name, c, base=Struct):
 	typ2code = {
@@ -567,6 +591,18 @@ _mkstruct('fuse_open_out', '''
 	__u32	padding;
 ''')
 
+_mkstruct('fuse_create_out', """
+	__u64	nodeid;		/* Inode ID */
+	__u64	generation;	/* Inode generation: nodeid:gen must \
+				be unique for the fs's lifetime */
+	__u64	_entry_valid;	/* Cache timeout for the name */
+	__u64	_attr_valid;	/* Cache timeout for the attributes */
+	__u32	_entry_valid_nsec;
+	__u32	_attr_valid_nsec;
+""", base=StructWithAttrOpen)
+_mktimeval(fuse_entry_out, 'entry_valid')
+_mktimeval(fuse_entry_out, 'attr_valid')
+
 _mkstruct('fuse_release_in', '''
 	__u64	fh;
 	__u32	flags;
@@ -840,7 +876,7 @@ fuse_opcode = {
 	'unlink'        : (10, c2pystr,         None),
 	'rmdir'         : (11, c2pystr,         None),
 	'rename'        : (12, fuse_rename_in.from_param2, None),
-	'link'          : (13, fuse_link_in,    fuse_entry_out),
+	'link'          : (13, fuse_link_in.from_param,    fuse_entry_out),
 	'open'          : (14, fuse_open_in,    fuse_open_out),
 	'read'          : (15, fuse_read_in,    None),
 	'write'         : (16, fuse_write_in.from_head, fuse_write_out),
@@ -857,7 +893,7 @@ fuse_opcode = {
 	'readdir'       : (28, fuse_read_in,    None),
 	'releasedir'    : (29, fuse_release_in, None),
 	'fsyncdir'      : (30, fuse_fsync_in,   None),
-	'create'        : (35, fuse_create_in.from_param, None),
+	'create'        : (35, fuse_create_in.from_param, fuse_create_out),
 	'getlk'         : (31, fuse_lk_in,      fuse_lk_out),
 	'setlk'         : (32, fuse_lk_in,      fuse_lk_out),
 	'setlkw'        : (33, fuse_lk_in,      fuse_lk_out),
