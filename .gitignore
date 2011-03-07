@@ -1,3 +1,9 @@
 *.swp
 *.pyc
 *.pyo
+build-*
+build/
+debian/files
+debian/*.log
+debian/*.substvars
+debian/python-twistfuse
