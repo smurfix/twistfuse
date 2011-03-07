@@ -17,6 +17,6 @@ Description: A Twisted-style adapter to the FUSE kernel
  methods, does not itself fork or block, and does not depend on
  any other FUSE library (except for the 'fusermount' binary).
  .
- A recent kernel is required; there currently is no compatibilty mode for
+ A recent kernel is required; there currently is no compatibility mode for
  older FUSE protocol versions.
 
