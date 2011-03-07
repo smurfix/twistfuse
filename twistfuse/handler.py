@@ -21,6 +21,11 @@ from twisted.internet.interfaces import IReadDescriptor
 from twisted.internet.process import Process
 
 from passfd import recvfd
+try:
+	errno.ENOATTR
+except AttributeError:
+	errno.ENOATTR=61 # TODO: this is Linux
+
 
 __all__ = ("Handler","NoReply")
 
@@ -666,7 +671,7 @@ class Handler(object, protocol.Protocol):
 			try:
 				value = xattrs[name]
 			except KeyError:
-				raise IOError(errno.ENODATA, "no such xattr")    # == ENOATTR
+				raise IOError(errno.ENOATTR, "no such xattr")
 
 		value = str(value)
 		if msg.size > 0:
@@ -682,15 +687,19 @@ class Handler(object, protocol.Protocol):
 		msg, name, value = msg
 		assert len(value) == msg.size
 		if hasattr(node,'setxattr'):
-			res = yield node.setxattr(name,value, ctx=req)
+			res = yield node.setxattr(name,value, msg.flags,ctx=req)
 			returnValue( res )
 
 		xattrs = yield node.getxattrs(ctx=req)
 		# XXX msg.flags ignored
+		if msg.flags & XATTR_CREATE and name in xattrs:
+			raise IOError(errno.ENOATTR, "attribute exists")
+		if msg.flags & XATTR_REPLACE and name not in xattrs:
+			raise IOError(errno.ENOATTR, "attribute does not exist")
 		try:
 			xattrs[name] = value
 		except KeyError:
-			raise IOError(errno.ENODATA, "cannot set xattr")    # == ENOATTR
+			raise IOError(errno.ENOATTR, "cannot set xattr")
 
 	@inlineCallbacks
 	def fuse_removexattr(self, req, msg):
@@ -703,7 +712,7 @@ class Handler(object, protocol.Protocol):
 		try:
 			del xattrs[msg]
 		except KeyError:
-			raise IOError(errno.ENODATA, "cannot delete xattr")   # == ENOATTR
+			raise IOError(errno.ENOATTR, "cannot delete xattr")
 		returnValue( None )
 
 	def send_notice(self, code, msg):

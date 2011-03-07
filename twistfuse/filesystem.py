@@ -186,7 +186,7 @@ class Inode(object):
 
 	def create(self, name,flags,mode,umask, ctx=None):
 		"""\
-			Create a new file; return an (inode, filehandle) tuple
+			Create a new file; return an (inode, filehandle, [openflags]) tuple
 			"""
 		raise IOError(errno.EROFS, "File.create is not implemented")
 
@@ -275,7 +275,7 @@ class Inode(object):
 			You may also seperately implement
 			* listxattrs(self)
 			* getxattr(self, name)
-			* setxattr(self, name,value)
+			* setxattr(self, name,value, flags)
 			* removexattr(self, name)
 			in which case this method will not be called.
 

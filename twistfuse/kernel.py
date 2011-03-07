@@ -70,6 +70,8 @@ __all__ = (
 	'TYPE_DIR',
 	'TYPE_LNK',
 	'TYPE_REG',
+	'XATTR_CREATE',
+	'XATTR_REPLACE',
 	'c2pystr',
 	'c2pystr2',
 	'cuse_init_in',
@@ -484,6 +486,10 @@ FUSE_MAX_IN = 8192
 FUSE_NAME_MAX = 1024
 FUSE_SYMLINK_MAX = 4096
 FUSE_XATTR_SIZE_MAX = 4096
+
+# setxattr flags
+XATTR_CREATE = 1
+XATTR_REPLACE = 2
 
 _mkstruct('fuse_entry_out', """
 	__u64	nodeid;		/* Inode ID */
