@@ -94,7 +94,6 @@ class FMHandler(object):
 	def processEnded(self, reason):
 		pass
 
-		
 
 class FuseMounter(Process):
 	def __init__(self, handler, mountpoint, opts):
@@ -210,7 +209,7 @@ class Handler(object, protocol.Protocol):
 	def log(self,s,*a):
 		if not self.logfile:
 			return
-		print >>sys.stderr,s % a
+		print >>self.logfile, s % a
 
 
 	## Twisted stuff
@@ -605,14 +604,14 @@ class Handler(object, protocol.Protocol):
 
 	@inlineCallbacks
 	def fuse_forget(self, req, msg):
-		print >>sys.stderr,"FORGET",repr(req),repr(msg)
+		self.log("FORGET",repr(req),repr(msg))
 
 		node = yield self.filesystem.getnode(req.nodeid)
 		yield self.filesystem.forget(node)
 		raise NoReply
 
 	def fuse_batch_forget(self, req, msg):
-		print >>sys.stderr,"BFORGET",repr(req),repr(msg)
+		self.log("BFORGET",repr(req),repr(msg))
 		if hasattr(self.filesystem, 'forget'):
 			msg, data = msg
 			size = fuse_forget_one.calcsize()
