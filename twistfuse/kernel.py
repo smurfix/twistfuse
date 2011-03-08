@@ -566,11 +566,11 @@ _mkstruct('fuse_setattr_in', '''
 	__u64   fh;
 	__u64   size;
 	__u64   lock_owner;
-	__u64   atime;
-	__u64   mtime;
+	__u64   _atime;
+	__u64   _mtime;
 	__u64   unused2;
-	__u32   atimensec;
-	__u32   mtimensec;
+	__u32   _atime_nsec;
+	__u32   _mtime_nsec;
 	__u32   unused3;
 	__u32   mode;
 	__u32   unused4;
@@ -578,6 +578,9 @@ _mkstruct('fuse_setattr_in', '''
 	__u32   gid;
 	__u32   unused5;
 ''')
+_mktimeval(fuse_setattr_in, 'atime')
+_mktimeval(fuse_setattr_in, 'mtime')
+
 
 _mkstruct('fuse_open_in', '''
 	__u32	flags;
