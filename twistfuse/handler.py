@@ -714,6 +714,9 @@ class Handler(object, protocol.Protocol):
 			raise IOError(errno.ENOATTR, "cannot delete xattr")
 		returnValue( None )
 
+	def fuse_statfs(self, req, msg):
+		return self.filesystem.statfs()
+
 	def send_notice(self, code, msg):
 		if msg is None:
 			msg = ''

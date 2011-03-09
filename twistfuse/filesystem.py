@@ -373,3 +373,16 @@ class FileSystem(object):
 			"""
 		raise IOError(errno.EROFS, "Filesystem.rename is not implemented")
 
+	def statfs(self):
+		"""\
+			Return file system state.
+	
+			Recognized dict keys:
+			blocks bfree bavail files ffree bsize namelen frsize
+
+			"""
+		return {
+			'blocks':0, 'bfree':0, 'bavail':0,
+			'files':0, 'ffree':0, 'bsize':4096,
+			'namelen':1024, 'frsize': 4096
+		}

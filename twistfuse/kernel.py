@@ -889,7 +889,7 @@ fuse_opcode = {
 	'open'          : (14, fuse_open_in,    fuse_open_out),
 	'read'          : (15, fuse_read_in,    None),
 	'write'         : (16, fuse_write_in.from_head, fuse_write_out),
-	'statfs'        : (17, None,None),
+	'statfs'        : (17, None,            fuse_statfs_out),
 	'release'       : (18, fuse_release_in, None),
 	'fsync'         : (20, fuse_fsync_in,   None),
 	'setxattr'      : (21, fuse_setxattr_in.from_param_head,None),
