@@ -8,7 +8,7 @@ Standards-Version: 3.7.2
 
 Package: python-twistfuse
 Architecture: all
-Depends: ${python:Depends}, python (>= 2.6), python-twisted-core (>= 10.1), python-sqlmix, fuse-utils (> 2.8)
+Depends: ${python:Depends}, python (>= 2.6), python-twisted-core (>= 10.1), python-sqlmix, fuse-utils (>> 2.8)
 Provides: ${python:Provides}
 XB-Python-Version: ${python:Versions}
 Description: A Twisted-style adapter to the FUSE kernel
