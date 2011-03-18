@@ -1,3 +1,9 @@
+python-twistfuse (0.1.2-1) unstable; urgency=low
+
+  * fuse_forget does not send a reply. Ever.
+
+ -- Matthias Urlichs <smurf@smurf.noris.de>  Fri, 18 Mar 2011 06:57:54 +0100
+
 python-twistfuse (0.1.1-1) unstable; urgency=low
 
   * (re)implement statfs.

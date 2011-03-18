@@ -88,7 +88,6 @@ __all__ = (
 	'fuse_flush_in',
 	'fuse_forget_in',
 	'fuse_forget_one',
-	'fuse_forget_one',
 	'fuse_fsync_in',
 	'fuse_getattr_in',
 	'fuse_getxattr_in',
@@ -505,11 +504,6 @@ _mktimeval(fuse_entry_out, 'attr_valid')
 
 _mkstruct('fuse_forget_in', '''
 	__u64	nlookup;
-''')
-
-_mkstruct('fuse_forget_one', '''
-	__u64   nodeid;
-	__u64   nlookup;
 ''')
 
 _mkstruct('fuse_batch_forget_in', '''

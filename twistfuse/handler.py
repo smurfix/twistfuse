@@ -606,10 +606,14 @@ class Handler(object, protocol.Protocol):
 	def fuse_forget(self, req, msg):
 		self.log("FORGET",repr(req),repr(msg))
 
-		node = yield self.filesystem.getnode(req.nodeid)
-		yield self.filesystem.forget(node)
+		try:
+			node = yield self.filesystem.getnode(req.nodeid)
+			yield self.filesystem.forget(node)
+		except Exception:
+			pass
 		raise NoReply
 
+	@inlineCallbacks
 	def fuse_batch_forget(self, req, msg):
 		self.log("BFORGET",repr(req),repr(msg))
 		if hasattr(self.filesystem, 'forget'):
@@ -618,7 +622,11 @@ class Handler(object, protocol.Protocol):
 			offset = 0
 			for i in range(msg.count):
 				msg1 = fuse_forget_one(data[offset:offset+size])
-				self.filesystem.forget(msg1.nodeid)
+				try:
+					node = yield self.filesystem.getnode(msg1.nodeid)
+					yield self.filesystem.forget(node)
+				except Exception:
+					pass
 				offset += size
 		raise NoReply
 
