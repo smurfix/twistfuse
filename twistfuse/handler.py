@@ -125,8 +125,19 @@ class FuseFD(abstract.FileDescriptor):
 		return self.fd
 	def writeSomeData(self, data):
 		return fdesc.writeToFD(self.fd, data)
+
 	def doRead(self):
-		return fdesc.readFromFD(self.fd, self.dataReceived)
+		try:
+			output = os.read(self.fd, self.handler.MAX_LENGTH)
+		except (OSError, IOError), ioe:
+			if ioe.args[0] in (errno.EAGAIN, errno.EINTR):
+				return
+			else:
+				return CONNECTION_LOST
+		if not output:
+			return CONNECTION_DONE
+		self.dataReceived(output)
+
 	def dataReceived(self, data):
 		self.handler.dataReceived(data)
 
@@ -306,9 +317,10 @@ class Handler(object, protocol.Protocol):
 		d = self.filesystem.mount(self, msg.flags)
 		rd = dict(major = FUSE_KERNEL_VERSION,
 			minor = FUSE_KERNEL_MINOR_VERSION, max_readahead = 1024*1024,
-			max_background=20, max_write=65536, flags = 0)
+			max_background=20, max_write=4096, flags = 0)
 		if d:
 			rd.update(d)
+		self.MAX_LENGTH = rd['max_write']+fuse_in_header.calcsize()+fuse_write_in.calcsize()
 		return rd
 
 
