@@ -254,10 +254,10 @@ class Handler(object, protocol.Protocol):
 			return meth(req, msg)
 
 		reply = maybeDeferred(doit,msg)
-		def logReply(r):
-			self.log('   >> %s', repr(r))
-			return r
-		reply.addBoth(logReply)
+#		def logReply(r):
+#			self.log('   >> %s', repr(r))
+#			return r
+#		reply.addBoth(logReply)
 
 		def dataHandler(reply):
 			if s_out is not None and hasattr(reply,"items"):
