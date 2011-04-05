@@ -18,6 +18,7 @@ from zope.interface import implements
 from twisted.internet import abstract,fdesc,protocol,reactor
 from twisted.internet.defer import maybeDeferred,inlineCallbacks,returnValue
 from twisted.internet.interfaces import IReadDescriptor
+from twisted.internet.main import CONNECTION_DONE,CONNECTION_LOST
 from twisted.internet.process import Process
 
 from passfd import recvfd
