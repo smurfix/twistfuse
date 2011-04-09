@@ -723,7 +723,7 @@ class Handler(object, protocol.Protocol):
 
 	@inlineCallbacks
 	def fuse_removexattr(self, req, msg):
-		node = yield self.filesystem.getnode(node)
+		node = yield self.filesystem.getnode(req.nodeid)
 		if hasattr(node,'removexattr'):
 			res = yield node.removexattr(msg, ctx=req)
 			returnValue( res )
