@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from __future__ import division
+from __future__ import division,print_function
 
 ##
 ##  Copyright © 2011, Matthias Urlichs <matthias@urlichs.de>
@@ -16,7 +16,7 @@ from traceback import print_exc
 
 from zope.interface import implements
 from twisted.internet import abstract,fdesc,protocol,reactor
-from twisted.internet.defer import maybeDeferred,inlineCallbacks,returnValue
+from twisted.internet.defer import maybeDeferred,inlineCallbacks,returnValue,Deferred
 from twisted.internet.interfaces import IReadDescriptor
 from twisted.internet.main import CONNECTION_DONE,CONNECTION_LOST
 from twisted.internet.process import Process
@@ -29,6 +29,27 @@ except AttributeError:
 
 
 __all__ = ("Handler","NoReply")
+
+
+def debugproc(p):
+	return p
+	def doit(*a,**k):
+		print(">",p,a,k)
+		try:
+			res = p(*a,**k)
+		except Exception:
+			e1,e2,e3 = sys.exc_info()
+			raise e1,e2,e3
+		else:
+			if isinstance(res,Deferred):
+				def pr(r):
+					print("<",p,r)
+					return r
+				res.addBoth(pr)
+			else:
+				print("<",p,res)
+		return res
+	return doit
 
 class NoReply(Exception):
 	"""Raise this exception to not send a FUSE reply back"""
@@ -165,7 +186,7 @@ class Handler(object, protocol.Protocol):
 		self.transport = FuseFD(self,fd)
 		self.log('* mounted at %s', self.mountpoint)
 	def mount_error(self,reason):
-		print >>sys.stderr,reason
+		print(reason, file=sys.stderr)
 		reactor.stop()
 
 	def mount(self,filesystem,mountpoint, **opts1):
@@ -221,7 +242,7 @@ class Handler(object, protocol.Protocol):
 	def log(self,s,*a):
 		if not self.logfile:
 			return
-		print >>self.logfile, s % a
+		print(s%a, file=self.logfile)
 
 
 	## Twisted stuff
@@ -325,12 +346,14 @@ class Handler(object, protocol.Protocol):
 		return rd
 
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_getattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
 		res = yield self._getattr(node, ctx=req)
 		returnValue( res )
 
+	@debugproc
 	@inlineCallbacks
 	def _getattr(self,node,ctx):
 		attr = yield node.getattr()
@@ -340,6 +363,7 @@ class Handler(object, protocol.Protocol):
 			attr['entry_valid'] = (1,0)
 		returnValue( attr )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_setattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -360,6 +384,7 @@ class Handler(object, protocol.Protocol):
 		res = yield self._getattr(node, ctx=req)
 		returnValue( res )
 
+	@debugproc
 	def fuse_release(self, req, msg):
 		try:
 			f = self.filehandles.pop(msg.fh)
@@ -368,6 +393,7 @@ class Handler(object, protocol.Protocol):
 		else:
 			return f.release(ctx=req)
 
+	@debugproc
 	def fuse_releasedir(self, req, msg):
 		try:
 			f = self.dirhandles.pop(msg.fh)
@@ -376,6 +402,7 @@ class Handler(object, protocol.Protocol):
 		else:
 			return f.release(ctx=req)
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_opendir(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -390,6 +417,7 @@ class Handler(object, protocol.Protocol):
 		self.dirhandles[fh] = f
 		returnValue( dict(fh = fh) )
 
+	@debugproc
 	def fuse_fsyncdir(self, req, msg):
 		try:
 			f = self.dirhandles[msg.fh]
@@ -397,6 +425,7 @@ class Handler(object, protocol.Protocol):
 			raise IOError(errno.EBADF, msg.fh)
 		return f.sync(msg.fsync_flags, ctx=req)
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_readdir(self, req, msg):
 		try:
@@ -444,6 +473,7 @@ class Handler(object, protocol.Protocol):
 		yield self.filesystem.remember(node)
 		returnValue( attr )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_lookup(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -451,6 +481,7 @@ class Handler(object, protocol.Protocol):
 		res = yield self.replyentry(res)
 		returnValue( res )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_open(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -469,6 +500,7 @@ class Handler(object, protocol.Protocol):
 		self.filehandles[fh] = f
 		returnValue( dict(fh = fh, open_flags = open_flags) )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_create(self, req, msg):
 		msg, filename = msg
@@ -494,6 +526,7 @@ class Handler(object, protocol.Protocol):
 		returnValue( res )
 
 
+	@debugproc
 	def fuse_read(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
@@ -501,6 +534,7 @@ class Handler(object, protocol.Protocol):
 			raise IOError(errno.EBADF, msg.fh)
 		return f.read(msg.offset, msg.size, ctx=req)
 
+	@debugproc
 	def fuse_flush(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
@@ -508,6 +542,7 @@ class Handler(object, protocol.Protocol):
 			raise IOError(errno.EBADF, msg.fh)
 		return f.flush(msg.flush_flags, ctx=req)
 
+	@debugproc
 	def fuse_fsync(self, req, msg):
 		try:
 			f = self.filehandles[msg.fh]
@@ -515,6 +550,7 @@ class Handler(object, protocol.Protocol):
 			raise IOError(errno.EBADF, msg.fh)
 		return f.sync(msg.fsync_flags, ctx=req)
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_getlk(self, req, msg):
 		try:
@@ -525,6 +561,7 @@ class Handler(object, protocol.Protocol):
 		returnValue( dict(start = msg.start, end = msg.end,
 		             type = msg.type, pid = msg.pid) )
 		
+	@debugproc
 	@inlineCallbacks
 	def fuse_setlk(self, req, msg):
 		try:
@@ -535,6 +572,7 @@ class Handler(object, protocol.Protocol):
 		returnValue( dict(start = msg.start, end = msg.end,
 		             type = msg.type, pid = msg.pid) )
 		
+	@debugproc
 	@inlineCallbacks
 	def fuse_setlkw(self, req, msg):
 		try:
@@ -545,6 +583,7 @@ class Handler(object, protocol.Protocol):
 		returnValue( dict(start = msg.start, end = msg.end,
 		             type = msg.type, pid = msg.pid) )
 		
+	@debugproc
 	@inlineCallbacks
 	def fuse_write(self, req, msg):
 		msg, data = msg
@@ -556,6 +595,7 @@ class Handler(object, protocol.Protocol):
 		if size is None: size = len(data)
 		returnValue( dict(size = size) )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_mknod(self, req, msg):
 		msg, filename = msg
@@ -564,6 +604,7 @@ class Handler(object, protocol.Protocol):
 		res = yield self.replyentry(res)
 		returnValue( res )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_mkdir(self, req, msg):
 		msg, filename = msg
@@ -572,6 +613,7 @@ class Handler(object, protocol.Protocol):
 		res = yield self.replyentry(res)
 		returnValue( res )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_symlink(self, req, msg):
 		linkname, target = msg
@@ -580,6 +622,7 @@ class Handler(object, protocol.Protocol):
 		res = yield self.replyentry(res)
 		returnValue( res )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_link(self, req, msg):
 		msg, target = msg
@@ -589,6 +632,7 @@ class Handler(object, protocol.Protocol):
 		res = yield self.replyentry(res)
 		returnValue( res )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_unlink(self, req, msg):
 		filename = msg
@@ -597,6 +641,7 @@ class Handler(object, protocol.Protocol):
 		yield node.unlink(filename, ctx=req)
 		returnValue( None )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_rmdir(self, req, msg):
 		dirname = msg
@@ -605,16 +650,19 @@ class Handler(object, protocol.Protocol):
 		yield node.rmdir(dirname, ctx=req)
 		returnValue( None )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_access(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
 		yield node.access(msg.mask, ctx=req)
 		returnValue( None )
 
+	@debugproc
 	def fuse_interrupt(self, req, msg):
 		# Pass req.unique into every upcall?
 		raise IOError(errno.ENOSYS, "interrupt not supported")
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_forget(self, req, msg):
 		self.log("FORGET",repr(req),repr(msg))
@@ -626,6 +674,7 @@ class Handler(object, protocol.Protocol):
 			pass
 		raise NoReply
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_batch_forget(self, req, msg):
 		self.log("BFORGET",repr(req),repr(msg))
@@ -643,12 +692,14 @@ class Handler(object, protocol.Protocol):
 				offset += size
 		raise NoReply
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_readlink(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
 		target = yield node.readlink(ctx=req)
 		returnValue( target )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_rename(self, req, msg):
 		msg, oldname, newname = msg
@@ -657,9 +708,11 @@ class Handler(object, protocol.Protocol):
 		yield self.filesystem.rename(oldnode, oldname, newnode, newname, ctx=req)
 		returnValue( None )
 
+	@debugproc
 	def getxattrs(self, node):
 		return node.getxattrs()
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_listxattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -680,6 +733,7 @@ class Handler(object, protocol.Protocol):
 		else:
 			returnValue( fuse_getxattr_out(size=totalsize) )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_getxattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -701,6 +755,7 @@ class Handler(object, protocol.Protocol):
 		else:
 			returnValue( fuse_getxattr_out(size=len(value)) )
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_setxattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -721,6 +776,7 @@ class Handler(object, protocol.Protocol):
 		except KeyError:
 			raise IOError(errno.ENOATTR, "cannot set xattr")
 
+	@debugproc
 	@inlineCallbacks
 	def fuse_removexattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
@@ -735,6 +791,7 @@ class Handler(object, protocol.Protocol):
 			raise IOError(errno.ENOATTR, "cannot delete xattr")
 		returnValue( None )
 
+	@debugproc
 	def fuse_statfs(self, req, msg):
 		return self.filesystem.statfs()
 
