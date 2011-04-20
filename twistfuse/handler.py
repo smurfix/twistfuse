@@ -149,16 +149,17 @@ class FuseFD(abstract.FileDescriptor):
 		return fdesc.writeToFD(self.fd, data)
 
 	def doRead(self):
+		# use max_length, as the kernel doesn't like split read requests
 		try:
-			output = os.read(self.fd, self.handler.MAX_LENGTH)
+			data = os.read(self.fd, self.handler.MAX_LENGTH)
 		except (OSError, IOError), ioe:
 			if ioe.args[0] in (errno.EAGAIN, errno.EINTR):
 				return
 			else:
 				return CONNECTION_LOST
-		if not output:
+		if not data:
 			return CONNECTION_DONE
-		self.dataReceived(output)
+		self.handler.dataReceived(data)
 
 	def dataReceived(self, data):
 		self.handler.dataReceived(data)
@@ -211,7 +212,6 @@ class Handler(object, protocol.Protocol):
 	def umount(self):
 		fs = self.filesystem
 		if fs is not None:
-			self.filesystem = None
 			fs.stop(False)
 		fd = self.fd
 		if fd is not None:
@@ -222,22 +222,7 @@ class Handler(object, protocol.Protocol):
 			self.mountpoint = None
 			self.log('* %s', cmd)
 			self.__system(cmd)
-
-	def __del__(self):
-		fs = getattr(self,"filesystem",None)
-		if fs is not None:
-			self.filesystem = None
-			fs.stop(True)
-		fd = getattr(self,"fd",None)
-		if fd is not None:
-			self.fd = None
-			fd.close()
-		mountpoint = getattr(self,"mountpoint",None)
-		if mountpoint is not None:
-			self.mountpoint = None
-			cmd = "fusermount -u '%s'" % mountpoint.replace("'", r"'\''")
-			self.log('* %s', cmd)
-			self.__system(cmd)
+	__del__ = umount
 
 	def log(self,s,*a):
 		if not self.logfile:
@@ -665,7 +650,7 @@ class Handler(object, protocol.Protocol):
 	@debugproc
 	@inlineCallbacks
 	def fuse_forget(self, req, msg):
-		self.log("FORGET",repr(req),repr(msg))
+		self.log("FORGET %s %s",repr(req),repr(msg))
 
 		try:
 			node = yield self.filesystem.getnode(req.nodeid)
