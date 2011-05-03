@@ -1,3 +1,9 @@
+python-twistfuse (0.1.7-unstable) maverick; urgency=low
+
+  * fix unmount handling
+
+ -- Matthias Urlichs <smurf@smurf.noris.de>  Tue, 03 May 2011 20:45:30 +0200
+
 python-twistfuse (0.1.6-1) unstable; urgency=low
 
   * Cleanup for sane shutdown.

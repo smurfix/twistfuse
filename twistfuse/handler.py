@@ -111,11 +111,12 @@ class FMHandler(object):
 		sys.stderr.write(data)
 	def childConnectionLost(self, childFD):
 		pass
-	def processExited(self, reason):
+	def processEnded(self, reason):
 		if self.done:
-			self.done.callback(reason)
+			self.done.callback(None) # (reason)
 			self.done = None
-	processEnded = processExited
+	def processExited(self, reason):
+		pass
 
 class FuseMounter(Process):
 	def __init__(self, handler, mountpoint, opts):
