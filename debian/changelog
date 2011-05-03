@@ -1,4 +1,10 @@
-python-twistfuse (0.1.7-unstable) maverick; urgency=low
+python-twistfuse (0.1.8-1) unstable; urgency=low
+
+  * catch the problem where the FS returns None for a handle
+
+ -- Matthias Urlichs <smurf@smurf.noris.de>  Tue, 03 May 2011 21:59:52 +0200
+
+python-twistfuse (0.1.7-1) unstable; urgency=low
 
   * fix unmount handling
 
