@@ -428,6 +428,8 @@ class Handler(object, protocol.Protocol):
 		if mode2type(attr['mode']) != TYPE_DIR:
 			raise IOError(errno.ENOTDIR, node)
 		f = yield node.opendir(ctx=req)
+		if f is None:
+			raise RuntimeError("bad directory handle")
 		fh = self.nexth
 		self.nexth += 1
 		self.dirhandles[fh] = f
@@ -511,6 +513,8 @@ class Handler(object, protocol.Protocol):
 			f, open_flags = f
 		else:
 			open_flags = 0
+		if f is None:
+			raise RuntimeError("bad file handle")
 		fh = self.nexth
 		self.nexth += 1
 		self.filehandles[fh] = f
