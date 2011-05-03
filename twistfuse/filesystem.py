@@ -302,6 +302,7 @@ class FileSystem(object):
 	FileType = File
 	DirType = Dir
 	rootnodeid = None
+	handler = None
 	def __init__(self, root, filetype=None,dirtype=None):
 		"""\
 			Setup. You need to either pass in a root inode.
@@ -338,7 +339,10 @@ class FileSystem(object):
 			immediately; otherwise, the system is still live and
 			you may return a Deferred.
 			"""
-		self.handler = None
+		h = self.handler
+		if h:
+			self.handler = None
+			return h.umount(force)
 
 	def getnode(self, nodeid):
 		"""\

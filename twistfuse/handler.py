@@ -103,8 +103,8 @@ class FDReader(object):
 
 
 class FMHandler(object):
-	def __init__(self):
-		pass
+	def __init__(self, done=None):
+		self.done=done
 	def makeConnection(self,proc):
 		pass
 	def childDataReceived(self, childFD, data):
@@ -112,10 +112,10 @@ class FMHandler(object):
 	def childConnectionLost(self, childFD):
 		pass
 	def processExited(self, reason):
-		pass
-	def processEnded(self, reason):
-		pass
-
+		if self.done:
+			self.done.callback(reason)
+			self.done = None
+	processEnded = processExited
 
 class FuseMounter(Process):
 	def __init__(self, handler, mountpoint, opts):
@@ -135,6 +135,12 @@ class FuseMounter(Process):
 	def got_no_fd(self,reason):
 		self.handler.mount_error(reason)
 		
+
+class FuseUMounter(Process):
+	def __init__(self, mountpoint):
+		self.done = Deferred()
+		args = ["fusermount","-u",mountpoint]
+		super(FuseUMounter,self).__init__(reactor, "/bin/fusermount", args, {}, None, FMHandler(self.done), childFDs={0:"w",1:"r",2:"r"})
 
 class FuseFD(abstract.FileDescriptor):
 	def __init__(self,handler,fd):
@@ -209,20 +215,44 @@ class Handler(object, protocol.Protocol):
 		self.filesystem = filesystem
 		FuseMounter(self,mountpoint,opts)
 
-	def umount(self):
+	def umount(self,force=False):
+		if not force:
+			return self._umount()
 		fs = self.filesystem
 		if fs is not None:
-			fs.stop(False)
+			self.filesystem = None
+			fs.stop(True)
+		if self.mountpoint:
+			mp = self.mountpoint
+			self.mountpoint = None
+			cmd = "fusermount -u '%s'" % mp.replace("'", r"'\''")
+			self.log('* %s', cmd)
+			self.__system(cmd)
+
+	@inlineCallbacks
+	def _umount(self):
 		fd = self.fd
 		if fd is not None:
 			self.fd = None
 			fd.close()
+		for f in self.filehandles.values():
+			yield f.release()
+		self.filehandles = None
+		for f in self.dirhandles.values():
+			yield f.release()
+		self.dirhandles = None
+
+		fs = self.filesystem
+		if fs is not None:
+			self.filesystem = None
+			yield fs.stop(False)
 		if self.mountpoint:
-			cmd = "fusermount -u '%s'" % self.mountpoint.replace("'", r"'\''")
+			mp = self.mountpoint
 			self.mountpoint = None
-			self.log('* %s', cmd)
-			self.__system(cmd)
-	__del__ = umount
+			yield FuseUMounter(mp).done
+
+	def __del__(self):
+		self.umount(True)
 
 	def log(self,s,*a):
 		if not self.logfile:

@@ -63,6 +63,6 @@ def main():
 		os.mkdir("/tmp/dummy", 0o755)
 	h.mount(fs,"/tmp/dummy")
 	reactor.run()
-	h.umount()
+	h.umount(True)
 
 main()
