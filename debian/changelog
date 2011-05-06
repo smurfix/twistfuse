@@ -1,3 +1,9 @@
+python-twistfuse (0.1.9-1) unstable; urgency=low
+
+  * Rename inode.nodeid ⇒ inode.inum
+
+ -- Matthias Urlichs <smurf@smurf.noris.de>  Fri, 06 May 2011 11:29:03 +0200
+
 python-twistfuse (0.1.8-1) unstable; urgency=low
 
   * catch the problem where the FS returns None for a handle

@@ -132,9 +132,9 @@ class Inode(object):
 		"""
 	nodeid = None
 
-	def __init__(self,filesystem,nodeid, ctx=None):
-		self.filesystem = filesystem
-		self.nodeid = nodeid
+	def __init__(self,filesystem,inum, ctx=None):
+		self.fs = filesystem
+		self.inum = inum
 
 	def getattr(self):
 		"""\
@@ -301,7 +301,7 @@ class FileSystem(object):
 	MOUNT_OPTIONS = {}
 	FileType = File
 	DirType = Dir
-	rootnodeid = None
+	root_inum = None
 	handler = None
 	def __init__(self, root, filetype=None,dirtype=None):
 		"""\
@@ -312,7 +312,7 @@ class FileSystem(object):
 			"""
 
 		self.nodes = {}
-		self.rootnodeid = root.nodeid
+		self.root_inum = root.inum
 
 		if filetype:
 			self.FileType = filetype
@@ -350,7 +350,7 @@ class FileSystem(object):
 			corresponding object.
 			"""
 		if nodeid == 1:
-			nodeid = self.rootnodeid
+			nodeid = self.root_inum
 		return self.nodes[nodeid]
 
 	def remember(self, node):
@@ -358,16 +358,16 @@ class FileSystem(object):
 			Remember this node.
 			"""
 		node.remember()
-		self.nodes[node.nodeid] = node
+		self.nodes[node.inum] = node
 
 	def forget(self,node):
 		"""\
 			Drop this node from the cache.
 			"""
-		if node.nodeid == self.rootnodeid:
-			nodes[node.nodeid].sync()
+		if node.inum == self.root_inum:
+			nodes[node.inum].sync()
 			return # the root node cannot be dropped from the cache
-		del self.nodes[node.nodeid]
+		del self.nodes[node.inum]
 		node.forget()
 
 	def rename(self, oldnode, oldname, newnode, newname, ctx=None):

@@ -11,6 +11,7 @@ Architecture: all
 Depends: ${python:Depends}, python (>= 2.6), python-twisted-core (>= 10.1), python-sqlmix, fuse-utils (>> 2.8)
 Provides: ${python:Provides}
 XB-Python-Version: ${python:Versions}
+Breaks: python-sqlfuse (<< 0.6.1-1)
 Description: A Twisted-style adapter to the FUSE kernel
  This Python module implements an asynchronous, Twisted-compatible
  interface to FUSE. It accepts Deferred results for all front-end
