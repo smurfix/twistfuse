@@ -297,28 +297,33 @@ class Handler(object, protocol.Protocol):
 #			return r
 #		reply.addBoth(logReply)
 
-		def dataHandler(reply):
-			if s_out is not None and hasattr(reply,"items"):
-				reply = s_out(**reply)
-			self.send_reply(req, reply)
-		def errHandler(e):
-			if e.check(NotImplementedError):
+		def e_handler(e):
+			if isinstance(e,NotImplementedError):
 				self.log('%s: not implemented', name)
 				self.send_reply(req, err=errno.ENOSYS)
-			elif e.check(EnvironmentError): # superclass of IOError, OSError
-				if e.value.errno is None:
-					errn = e.value.args[0]
-					errs = " ".join(e.value.args[1:])
+			elif isinstance(e,EnvironmentError):
+				if e.errno is None:
+					errn = e.args[0]
+					errs = " ".join(e.args[1:])
 				else:
-					errn = e.value.errno
-					errs = e.value.strerror
+					errn = e.errno
+					errs = e.strerror
 				self.log('%s: %d: %s', name, -(errn or 0), errs)
 				self.send_reply(req, err = errn or errno.ESTALE)
-			elif e.check(NoReply):
+			elif isinstance(e,NoReply):
 				pass
 			else:
-				e.printTraceback(file=sys.stderr)
 				self.send_reply(req, err = errno.ESTALE)
+				
+		def dataHandler(reply):
+			if isinstance(reply,BaseException):
+				return e_handler(reply)
+			elif s_out is not None and hasattr(reply,"items"):
+				reply = s_out(**reply)
+			self.send_reply(req, reply)
+
+		def errHandler(e):
+			e_handler(e.value)
 		reply.addCallback(dataHandler)
 		reply.addErrback(errHandler)
 

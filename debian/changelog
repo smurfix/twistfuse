@@ -1,3 +1,9 @@
+python-twistfuse (0.1.10-1) unstable; urgency=low
+
+  * Handle errors returned inline.
+
+ -- Matthias Urlichs <smurf@smurf.noris.de>  Mon, 09 May 2011 11:17:41 +0200
+
 python-twistfuse (0.1.9-1) unstable; urgency=low
 
   * Rename inode.nodeid ⇒ inode.inum
