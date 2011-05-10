@@ -318,7 +318,7 @@ class Handler(object, protocol.Protocol):
 		def dataHandler(reply):
 			if isinstance(reply,BaseException):
 				return e_handler(reply)
-			elif s_out is not None and hasattr(reply,"items"):
+			if s_out is not None and hasattr(reply,"items"):
 				reply = s_out(**reply)
 			self.send_reply(req, reply)
 
@@ -371,6 +371,8 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_getattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		res = yield self._getattr(node, ctx=req)
 		returnValue( res )
 
@@ -378,6 +380,8 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def _getattr(self,node,ctx):
 		attr = yield node.getattr()
+		if isinstance(attr,BaseException):
+			returnValue( attr )
 		if 'attr' not in attr:
 			attr = {'attr':attr}
 			attr['attr_valid'] = (1,0)
@@ -388,6 +392,8 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_setattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		values = {}
 		if msg.valid & FATTR_MODE:
 			values['mode'] = msg.mode & 0777
@@ -427,12 +433,18 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_opendir(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		attr = yield node.getattr()
+		if isinstance(attr,BaseException):
+			returnValue( attr )
 		if 'attr' in attr:
 			attr = attr['attr']
 		if mode2type(attr['mode']) != TYPE_DIR:
 			raise IOError(errno.ENOTDIR, node)
 		f = yield node.opendir(ctx=req)
+		if isinstance(f,BaseException):
+			returnValue( f )
 		if f is None:
 			raise RuntimeError("bad directory handle")
 		fh = self.nexth
@@ -473,7 +485,9 @@ class Handler(object, protocol.Protocol):
 			length[0] += fuse_dirent.calcsize(len(name))
 
 		try:
-			yield f.read(_read_cb, offset=msg.offset, ctx=req)
+			res = yield f.read(_read_cb, offset=msg.offset, ctx=req)
+			if isinstance(res,BaseException):
+				returnValue( res )
 		except ExitLoop:
 			pass
 		data = ''.join([d.pack() for d in d_entries])
@@ -487,20 +501,28 @@ class Handler(object, protocol.Protocol):
 			node = res
 			entry_valid = node.entry_valid()
 		attr = yield node.getattr()
+		if isinstance(attr,BaseException):
+			returnValue( attr )
 		if 'attr' not in attr:
 			attr = {'attr': attr}
 		if 'attr_valid' not in attr:
 			attr['attr_valid'] = node.attr_valid()
 		if 'entry_valid' not in attr:
 			attr['entry_valid'] = entry_valid
-		yield self.filesystem.remember(node)
+		res = yield self.filesystem.remember(node)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( attr )
 
 	@debugproc
 	@inlineCallbacks
 	def fuse_lookup(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		res = yield node.lookup(msg)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		res = yield self.replyentry(res)
 		returnValue( res )
 
@@ -508,12 +530,18 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_open(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		attr = yield node.getattr()
+		if isinstance(attr,BaseException):
+			returnValue( attr )
 		if 'attr' in attr:
 			attr = attr['attr']
 		if mode2type(attr["mode"]) != TYPE_REG:
 			raise IOError(errno.EPERM, node)
 		f = yield node.open(msg.flags, ctx=req)
+		if isinstance(f,BaseException):
+			returnValue( f )
 		if isinstance(f, tuple):
 			f, open_flags = f
 		else:
@@ -530,12 +558,18 @@ class Handler(object, protocol.Protocol):
 	def fuse_create(self, req, msg):
 		msg, filename = msg
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		attr = yield node.getattr()
+		if isinstance(attr,BaseException):
+			returnValue( attr )
 		if 'attr' in attr:
 			attr = attr['attr']
 		if mode2type(attr["mode"]) != TYPE_DIR:
 			raise IOError(errno.EPERM, node)
 		f = yield node.create(filename, msg.flags, msg.mode, msg.umask, ctx=req)
+		if isinstance(f,BaseException):
+			returnValue( f )
 		inode = f[0]
 		if len(f) > 2:
 			open_flags = f[2]
@@ -547,6 +581,8 @@ class Handler(object, protocol.Protocol):
 		self.nexth += 1
 		self.filehandles[fh] = f
 		res = yield self.replyentry(inode)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		res['open'] = {'fh':fh, 'open_flags':open_flags }
 		returnValue( res )
 
@@ -582,7 +618,9 @@ class Handler(object, protocol.Protocol):
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		yield f.getlock(msg.start,msg.end,msg.type, ctx=req)
+		res = yield f.getlock(msg.start,msg.end,msg.type, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( dict(start = msg.start, end = msg.end,
 		             type = msg.type, pid = msg.pid) )
 		
@@ -593,7 +631,9 @@ class Handler(object, protocol.Protocol):
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		yield f.setlock(msg.start,msg.end,msg.type, wait=0, ctx=req)
+		res = yield f.setlock(msg.start,msg.end,msg.type, wait=0, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( dict(start = msg.start, end = msg.end,
 		             type = msg.type, pid = msg.pid) )
 		
@@ -604,7 +644,9 @@ class Handler(object, protocol.Protocol):
 			f = self.filehandles[msg.fh]
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
-		yield f.setlock(msg.start,msg.end,msg.type, wait=1, ctx=req)
+		res = yield f.setlock(msg.start,msg.end,msg.type, wait=1, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( dict(start = msg.start, end = msg.end,
 		             type = msg.type, pid = msg.pid) )
 		
@@ -617,6 +659,8 @@ class Handler(object, protocol.Protocol):
 		except KeyError:
 			raise IOError(errno.EBADF, msg.fh)
 		size = yield f.write(msg.offset, data, ctx=req)
+		if isinstance(size,BaseException):
+			returnValue( size )
 		if size is None: size = len(data)
 		returnValue( dict(size = size) )
 
@@ -625,7 +669,11 @@ class Handler(object, protocol.Protocol):
 	def fuse_mknod(self, req, msg):
 		msg, filename = msg
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		res = yield node.mknod(filename, msg.mode,msg.rdev,msg.umask, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		res = yield self.replyentry(res)
 		returnValue( res )
 
@@ -634,7 +682,11 @@ class Handler(object, protocol.Protocol):
 	def fuse_mkdir(self, req, msg):
 		msg, filename = msg
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		res = yield node.mkdir(filename, msg.mode,msg.umask, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		res = yield self.replyentry(res)
 		returnValue( res )
 
@@ -643,7 +695,11 @@ class Handler(object, protocol.Protocol):
 	def fuse_symlink(self, req, msg):
 		linkname, target = msg
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		res = yield node.symlink(linkname, target, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		res = yield self.replyentry(res)
 		returnValue( res )
 
@@ -652,8 +708,14 @@ class Handler(object, protocol.Protocol):
 	def fuse_link(self, req, msg):
 		msg, target = msg
 		oldnode = yield self.filesystem.getnode(msg.oldnodeid)
+		if isinstance(oldnode,BaseException):
+			returnValue( oldnode )
 		newnode = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(newnode,BaseException):
+			returnValue( newnode )
 		res = yield newnode.link(oldnode, target, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		res = yield self.replyentry(res)
 		returnValue( res )
 
@@ -663,7 +725,11 @@ class Handler(object, protocol.Protocol):
 		filename = msg
 
 		node = yield self.filesystem.getnode(req.nodeid)
-		yield node.unlink(filename, ctx=req)
+		if isinstance(node,BaseException):
+			returnValue( node )
+		res = yield node.unlink(filename, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( None )
 
 	@debugproc
@@ -672,14 +738,22 @@ class Handler(object, protocol.Protocol):
 		dirname = msg
 
 		node = yield self.filesystem.getnode(req.nodeid)
-		yield node.rmdir(dirname, ctx=req)
+		if isinstance(node,BaseException):
+			returnValue( node )
+		res = yield node.rmdir(dirname, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( None )
 
 	@debugproc
 	@inlineCallbacks
 	def fuse_access(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
-		yield node.access(msg.mask, ctx=req)
+		if isinstance(node,BaseException):
+			returnValue( node )
+		res = yield node.access(msg.mask, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( None )
 
 	@debugproc
@@ -721,6 +795,8 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_readlink(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		target = yield node.readlink(ctx=req)
 		returnValue( target )
 
@@ -729,8 +805,14 @@ class Handler(object, protocol.Protocol):
 	def fuse_rename(self, req, msg):
 		msg, oldname, newname = msg
 		oldnode = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(oldnode,BaseException):
+			returnValue( oldnode )
 		newnode = yield self.filesystem.getnode(msg.newdir)
-		yield self.filesystem.rename(oldnode, oldname, newnode, newname, ctx=req)
+		if isinstance(newnode,BaseException):
+			returnValue( newnode )
+		res = yield self.filesystem.rename(oldnode, oldname, newnode, newname, ctx=req)
+		if isinstance(res,BaseException):
+			returnValue( res )
 		returnValue( None )
 
 	@debugproc
@@ -741,10 +823,16 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_listxattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		if hasattr(node,'listxattrs'):
 			names = yield node.listxattrs(ctx=req)
+			if isinstance(names,BaseException):
+				returnValue( names )
 		else:
 			names = yield node.getxattrs(ctx=req)
+			if isinstance(names,BaseException):
+				returnValue( names )
 			names = names.keys()
 
 		totalsize = 0
@@ -762,11 +850,17 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_getxattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		msg, name = msg
 		if hasattr(node,'getxattr'):
 			value = yield node.getxattr(name, ctx=req)
+			if isinstance(value,BaseException):
+				returnValue( value )
 		else:
 			xattrs = yield node.getxattrs(ctx=req)
+			if isinstance(xattrs,BaseException):
+				returnValue( xattrs )
 			try:
 				value = xattrs[name]
 			except KeyError:
@@ -784,6 +878,8 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_setxattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		msg, name, value = msg
 		assert len(value) == msg.size
 		if hasattr(node,'setxattr'):
@@ -791,6 +887,8 @@ class Handler(object, protocol.Protocol):
 			returnValue( res )
 
 		xattrs = yield node.getxattrs(ctx=req)
+		if isinstance(xattrs,BaseException):
+			returnValue( xattrs )
 		# XXX msg.flags ignored
 		if msg.flags & XATTR_CREATE and name in xattrs:
 			raise IOError(errno.ENOATTR, "attribute exists")
@@ -805,11 +903,15 @@ class Handler(object, protocol.Protocol):
 	@inlineCallbacks
 	def fuse_removexattr(self, req, msg):
 		node = yield self.filesystem.getnode(req.nodeid)
+		if isinstance(node,BaseException):
+			returnValue( node )
 		if hasattr(node,'removexattr'):
 			res = yield node.removexattr(msg, ctx=req)
 			returnValue( res )
 
 		xattrs = yield node.getxattrs(ctx=req)
+		if isinstance(xattrs,BaseException):
+			returnValue( xattrs )
 		try:
 			del xattrs[msg]
 		except KeyError:
