@@ -180,7 +180,7 @@ class Inode(object):
 
 			The default implementation simply creates a filesystem.FileType object.
 			"""
-		f = self.filesystem.FileType(self,mode)
+		f = self.fs.FileType(self,mode)
 		f.open()
 		return f
 
@@ -196,7 +196,7 @@ class Inode(object):
 
 			The default implementation uses a filesystem.DirType object.
 			"""
-		d = self.filesystem.DirType(self)
+		d = self.fs.DirType(self)
 		d.open()
 		return d
 

@@ -15,7 +15,7 @@ class DummyMain(Inode):
 		
 	def lookup(self,name, ctx=None):
 		if name == "dummy":
-			return DummyFileNode(self.filesystem,2)
+			return DummyFileNode(self.fs,2)
 		raise IOError(errno.ENOENT,"No entry named %s" % (repr(name,)))
 
 	def getattr(self):
