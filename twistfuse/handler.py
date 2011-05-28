@@ -356,10 +356,14 @@ class Handler(object, protocol.Protocol):
 		f = fuse_out_header(unique = req.unique,
 							error  = -err,
 							len    = self.__out_header_size + len(reply))
+
+		name = fuse_opcode2name[req.opcode][0]
 		if reply:
 			data = (f.pack(), reply)
+			self.log('== %s %s (%d)', name, repr(f),len(reply))
 		else:
 			data = (f.pack(),)
+			self.log('== %s %s', name, repr(f))
 		try:
 			#self.transport.write(data)
 			l = writev(self.transport.fileno(),data)
