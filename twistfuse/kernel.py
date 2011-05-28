@@ -19,7 +19,10 @@
 ## http://codespeak.net/svn/user/arigo/hack/pyfuse, but that code
 ## does not have any copyright or license notices.
 
-
+try:
+	from buffer import buffer
+except ImportError:
+	pass
 from struct import pack, unpack, calcsize
 import stat
 
@@ -171,25 +174,25 @@ class Struct(object):
 	def from_param(cls, msg):
 		limit = cls.calcsize()
 		zero = msg.index('\x00', limit)
-		return cls(msg[:limit]), msg[limit:zero]
+		return cls(msg[:limit]), buffer(msg,limit,zero-limit)
 
 	@classmethod
 	def from_param2(cls, msg):
 		limit = cls.calcsize()
 		zero1 = msg.index('\x00', limit)
 		zero2 = msg.index('\x00', zero1+1)
-		return cls(msg[:limit]), msg[limit:zero1], msg[zero1+1:zero2]
+		return cls(msg[:limit]), buffer(msg,limit,zero1-limit), buffer(msg,zero1+1,zero2-zero1-1)
 
 	@classmethod
 	def from_head(cls, msg):
 		limit = cls.calcsize()
-		return cls(msg[:limit]), msg[limit:]
+		return cls(msg[:limit]), buffer(msg,limit)
 
 	@classmethod
 	def from_param_head(cls, msg):
 		limit = cls.calcsize()
 		zero = msg.index('\x00', limit)
-		return cls(msg[:limit]), msg[limit:zero], msg[zero+1:]
+		return cls(msg[:limit]), buffer(msg,limit,zero-limit), buffer(msg,zero+1)
 
 class StructWithAttr(Struct):
 	def __init__(self, *args, **keys):

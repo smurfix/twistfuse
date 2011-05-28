@@ -22,6 +22,7 @@ from twisted.internet.main import CONNECTION_DONE,CONNECTION_LOST
 from twisted.internet.process import Process
 
 from passfd import recvfd
+from writev import writev
 try:
 	errno.ENOATTR
 except AttributeError:
@@ -152,8 +153,22 @@ class FuseFD(abstract.FileDescriptor):
 		self.connected = True
 	def fileno(self):
 		return self.fd
+
 	def writeSomeData(self, data):
-		return fdesc.writeToFD(self.fd, data)
+		try:
+			return os.write(self.fd, data)
+		except (OSError, IOError), io:
+			if io.errno in (errno.EAGAIN, errno.EINTR):
+				return 0
+			return CONNECTION_LOST
+	def writeSomeDatas(self, data):
+		try:
+			return writev(self, data)
+		except (OSError, IOError), io:
+			if io.errno in (errno.EAGAIN, errno.EINTR):
+				return 0
+			return CONNECTION_LOST
+
 
 	def doRead(self):
 		# use max_length, as the kernel doesn't like split read requests
@@ -236,11 +251,13 @@ class Handler(object, protocol.Protocol):
 		if fd is not None:
 			self.fd = None
 			fd.close()
-		for f in self.filehandles.values():
-			yield f.release()
+		if self.filehandles:
+			for f in self.filehandles.values():
+				yield f.release()
 		self.filehandles = None
-		for f in self.dirhandles.values():
-			yield f.release()
+		if self.dirhandles:
+			for f in self.dirhandles.values():
+				yield f.release()
 		self.dirhandles = None
 
 		fs = self.filesystem
@@ -313,6 +330,7 @@ class Handler(object, protocol.Protocol):
 			elif isinstance(e,NoReply):
 				pass
 			else:
+				self.log('%s: %s', name, repr(e))
 				self.send_reply(req, err = errno.ESTALE)
 				
 		def dataHandler(reply):
@@ -338,12 +356,17 @@ class Handler(object, protocol.Protocol):
 		f = fuse_out_header(unique = req.unique,
 							error  = -err,
 							len    = self.__out_header_size + len(reply))
-		data = f.pack() + reply
+		if reply:
+			data = (f.pack(), reply)
+		else:
+			data = (f.pack(),)
 		try:
 			#self.transport.write(data)
-			l = os.write(self.transport.fileno(),data)
-			if l != len(data):
-				raise RuntimeError("could not write to FUSE socket")
+			l = writev(self.transport.fileno(),data)
+			ls = 0
+			for d in data: ls += len(d)
+			if l != ls:
+				raise RuntimeError("could not write to FUSE socket: %d != %d" % (l,ls))
 		except Exception as e:
 			print_exc(file=sys.stderr)
 			self.connectionLost(e)
@@ -930,10 +953,14 @@ class Handler(object, protocol.Protocol):
 		f = fuse_out_header(unique = 0,
 							error  = code,
 							len    = self.__out_header_size + len(msg))
-		data = f.pack() + msg
+		
+		if msg:
+			data = (f.pack(), msg)
+		else:
+			data = (f.pack(),)
 		try:
 			#self.transport.write(data)
-			l = os.write(self.transport.fileno(),data)
+			l = writev(self.transport.fileno(),data)
 			if l != len(data):
 				raise RuntimeError("could not write notification to FUSE socket")
 		except Exception as e:
