@@ -13,6 +13,7 @@ from __future__ import division,print_function
 from kernel import *
 import os, errno, sys, stat, socket
 from traceback import print_exc
+from errno import errorcode
 
 from zope.interface import implements
 from twisted.internet import abstract,fdesc,protocol,reactor
@@ -23,11 +24,6 @@ from twisted.internet.process import Process
 
 from passfd import recvfd
 from writev import writev
-try:
-	errno.ENOATTR
-except AttributeError:
-	errno.ENOATTR=61 # TODO: this is Linux
-
 
 __all__ = ("Handler","NoReply")
 
@@ -305,7 +301,7 @@ class Handler(object, protocol.Protocol):
 				raise NotImplementedError
 			if s_in is not None:
 				msg = s_in(msg)
-			self.log('%s(%d) << %s', name, req.nodeid, repr(msg))
+			self.log('%s(%d:%d) << %s', name, req.unique, req.nodeid, repr(msg))
 			return meth(req, msg)
 
 		reply = maybeDeferred(doit,msg)
@@ -358,12 +354,19 @@ class Handler(object, protocol.Protocol):
 							len    = self.__out_header_size + len(reply))
 
 		name = fuse_opcode2name[req.opcode][0]
+		if err:
+			self.log('%s(%d) >> %s', name, req.unique, errorcode[err])
+		elif reply and len(reply) < 100:
+			self.log('%s(%d) >> %s', name, req.unique, repr(reply))
+		elif reply:
+			self.log('%s(%d) >> (%d)', name, req.unique, len(reply))
+		else:
+			self.log('%s(%d) >> -', name, req.unique)
+
 		if reply:
 			data = (f.pack(), reply)
-			self.log('== %s %s (%d)', name, repr(f),len(reply))
 		else:
 			data = (f.pack(),)
-			self.log('== %s %s', name, repr(f))
 		try:
 			#self.transport.write(data)
 			l = writev(self.transport.fileno(),data)
@@ -891,7 +894,7 @@ class Handler(object, protocol.Protocol):
 			try:
 				value = xattrs[name]
 			except KeyError:
-				raise IOError(errno.ENOATTR, "no such xattr")
+				raise IOError(errno.ENODATA, "no such xattr")
 
 		value = str(value)
 		if msg.size > 0:
@@ -918,13 +921,13 @@ class Handler(object, protocol.Protocol):
 			returnValue( xattrs )
 		# XXX msg.flags ignored
 		if msg.flags & XATTR_CREATE and name in xattrs:
-			raise IOError(errno.ENOATTR, "attribute exists")
+			raise IOError(errno.ENODATA, "attribute exists")
 		if msg.flags & XATTR_REPLACE and name not in xattrs:
-			raise IOError(errno.ENOATTR, "attribute does not exist")
+			raise IOError(errno.ENODATA, "attribute does not exist")
 		try:
 			xattrs[name] = value
 		except KeyError:
-			raise IOError(errno.ENOATTR, "cannot set xattr")
+			raise IOError(errno.ENODATA, "cannot set xattr")
 
 	@debugproc
 	@inlineCallbacks
@@ -942,7 +945,7 @@ class Handler(object, protocol.Protocol):
 		try:
 			del xattrs[msg]
 		except KeyError:
-			raise IOError(errno.ENOATTR, "cannot delete xattr")
+			raise IOError(errno.ENODATA, "cannot delete xattr")
 		returnValue( None )
 
 	@debugproc
