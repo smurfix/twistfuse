@@ -305,7 +305,7 @@ class Handler(object, protocol.Protocol):
 				raise NotImplementedError
 			if s_in is not None:
 				msg = s_in(msg)
-			self.log('%s(%d) << %s', name, req.nodeid, msg)
+			self.log('%s(%d) << %s', name, req.nodeid, repr(msg))
 			return meth(req, msg)
 
 		reply = maybeDeferred(doit,msg)
