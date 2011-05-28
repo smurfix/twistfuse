@@ -55,7 +55,7 @@ class File(object):
 			"""
 		raise IOError(errno.EROFS, "File.write is not implemented")
 
-	def release(self):
+	def release(self, ctx=None):
 		"""\
 			Close the file.
 			"""
@@ -101,7 +101,7 @@ class Dir(object):
 			"""
 		pass
 		
-	def release(self):
+	def release(self, ctx=None):
 		"""\
 			Close the file.
 			"""
