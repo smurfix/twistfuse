@@ -311,7 +311,7 @@ class Handler(object, protocol.Protocol):
 #			return r
 #		reply.addBoth(logReply)
 
-		def e_handler(e):
+		def e_handler(e, fail=None):
 			if isinstance(e,NotImplementedError):
 				self.log('%s: not implemented', name)
 				self.send_reply(req, err=errno.ENOSYS)
@@ -327,7 +327,7 @@ class Handler(object, protocol.Protocol):
 			elif isinstance(e,NoReply):
 				pass
 			else:
-				self.log('%s: %s', name, repr(e))
+				self.log('%s: %s', name, fail.getTraceback() if fail else repr(e))
 				self.send_reply(req, err = errno.ESTALE)
 				
 		def dataHandler(reply):
@@ -338,7 +338,8 @@ class Handler(object, protocol.Protocol):
 			self.send_reply(req, reply)
 
 		def errHandler(e):
-			e_handler(e.value)
+			e_handler(e.value,e)
+
 		reply.addCallback(dataHandler)
 		reply.addErrback(errHandler)
 
@@ -807,7 +808,7 @@ class Handler(object, protocol.Protocol):
 	@debugproc
 	@inlineCallbacks
 	def fuse_batch_forget(self, req, msg):
-		self.log("BFORGET",repr(req),repr(msg))
+		self.log("BFORGET %s %s",repr(req),repr(msg))
 		if hasattr(self.filesystem, 'forget'):
 			msg, data = msg
 			size = fuse_forget_one.calcsize()
