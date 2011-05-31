@@ -36,6 +36,7 @@ def debugproc(p):
 			res = p(*a,**k)
 		except Exception:
 			e1,e2,e3 = sys.exc_info()
+			print("<ERR",p,e1)
 			raise e1,e2,e3
 		else:
 			if isinstance(res,Deferred):
